@@ -104,6 +104,25 @@ export type CreateChannelManagedAgentsResult = {
   failures: CreateChannelManagedAgentBatchFailure[];
 };
 
+/**
+ * Pure start decision for {@link attachManagedAgentToChannel}: whether the
+ * attach should also start/deploy the agent. Display-only agents never
+ * start — they run on a harness this desktop cannot manage, so attach adds
+ * membership only and the mention publishes to the relay untouched.
+ */
+export function shouldStartOnAttach(
+  agent: Pick<ManagedAgent, "backend" | "displayOnly" | "status">,
+  ensureRunning: boolean,
+): boolean {
+  if (!ensureRunning || agent.displayOnly) {
+    return false;
+  }
+  if (agent.backend.type === "provider") {
+    return agent.status !== "deployed";
+  }
+  return agent.status !== "running" && agent.status !== "deployed";
+}
+
 export async function attachManagedAgentToChannel(
   channelId: string,
   input: AttachManagedAgentToChannelInput,
@@ -129,27 +148,19 @@ export async function attachManagedAgentToChannel(
   let agent = input.agent;
   let started = false;
 
-  if (ensureRunning) {
-    // Running agents (local or provider) auto-discover new channel membership
-    // via the harness's membership notifications — no restart needed. Only
-    // not-yet-running agents need a start/deploy call before the first mention
-    // can reach them. For a local agent the status check and the start are both
-    // pair-scoped to the active community: `agent.status` reflects that
-    // community's (agent, relay) pair, and `startManagedAgent` spawns that same
-    // pair — so this ensures the pair the caller is attaching to, never
-    // another community's.
-    const isRemote = input.agent.backend.type === "provider";
-    if (isRemote && input.agent.status !== "deployed") {
-      agent = await startManagedAgent(input.agent.pubkey);
-      started = true;
-    } else if (
-      !isRemote &&
-      input.agent.status !== "running" &&
-      input.agent.status !== "deployed"
-    ) {
-      agent = await startManagedAgent(input.agent.pubkey);
-      started = true;
-    }
+  // Running agents (local or provider) auto-discover new channel membership
+  // via the harness's membership notifications — no restart needed. Only
+  // not-yet-running agents need a start/deploy call before the first mention
+  // can reach them. Display-only agents are excluded outright: they run on
+  // a harness this desktop cannot manage, so there is nothing to start.
+  // For a local agent the status check and the start are both
+  // pair-scoped to the active community: `agent.status` reflects that
+  // community's (agent, relay) pair, and `startManagedAgent` spawns that same
+  // pair — so this ensures the pair the caller is attaching to, never
+  // another community's.
+  if (shouldStartOnAttach(input.agent, ensureRunning)) {
+    agent = await startManagedAgent(input.agent.pubkey);
+    started = true;
   }
 
   return {

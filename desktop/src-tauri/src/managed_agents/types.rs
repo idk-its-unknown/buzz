@@ -99,6 +99,7 @@ impl AgentDefinition {
     /// event coordinate (`d_tag = slug`) across the fold.
     pub fn into_agent_record(self) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            display_only: false,
             pubkey: String::new(),
             name: self.display_name.clone(),
             persona_id: None,
@@ -314,6 +315,13 @@ pub struct ManagedAgentRecord {
     /// frontend only fires when the agent is idle, connected, and local.
     #[serde(default = "default_auto_restart_on_config_change")]
     pub auto_restart_on_config_change: bool,
+    /// Display-only agent: it runs somewhere this desktop cannot manage (a
+    /// relay-hosted / server-side harness). The record exists purely so the
+    /// agent keeps a name and avatar in the Agents tab and mention picker;
+    /// no code path may spawn it locally, and mentioning it publishes to the
+    /// relay untouched instead of triggering a local launch attempt.
+    #[serde(default)]
+    pub display_only: bool,
     #[serde(default)]
     pub runtime_pid: Option<u32>,
     #[serde(default)]
@@ -552,6 +560,10 @@ pub struct ManagedAgentSummary {
     pub env_vars: BTreeMap<String, String>,
     pub backend: BackendKind,
     pub backend_agent_id: Option<String>,
+    /// Mirror of `ManagedAgentRecord.display_only`: the agent runs on a
+    /// harness this desktop cannot manage, so the UI must not offer local
+    /// lifecycle controls and the mention flow must not try to start it.
+    pub display_only: bool,
     pub status: String,
     pub pid: Option<u32>,
     pub created_at: String,

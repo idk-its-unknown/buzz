@@ -39,6 +39,7 @@ import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
 import { buildCustomEmojiTags } from "@/shared/lib/customEmojiTags";
 import {
   getErrorMessage,
+  isDisplayOnlyAgent,
   isManagedAgentRunning,
   isProviderBackedAgent,
   MENTION_REFERENCE_TAG,
@@ -202,7 +203,19 @@ export function useMentionSendFlow({
           continue;
         }
         try {
-          if (participantPubkeys.has(pubkey)) {
+          if (isDisplayOnlyAgent(agent)) {
+            // Relay-hosted agent: this desktop cannot start it. Ensure
+            // channel membership when needed, then let the mention publish
+            // to the relay untouched.
+            if (!participantPubkeys.has(pubkey)) {
+              await attachAgentMutation.mutateAsync({
+                channelId: capturedChannelId,
+                agent,
+                role: "bot",
+                ensureRunning: false,
+              });
+            }
+          } else if (participantPubkeys.has(pubkey)) {
             if (isProviderBackedAgent(agent)) {
               if (agent.status !== "deployed") {
                 await startAgentMutation.mutateAsync(agent.pubkey);

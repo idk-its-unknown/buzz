@@ -65,6 +65,7 @@ fn test_runtime() -> &'static KnownAcpRuntime {
 
 fn test_record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        display_only: false,
         pubkey: "test".to_string(),
         name: "Test Agent".to_string(),
         persona_id: None,

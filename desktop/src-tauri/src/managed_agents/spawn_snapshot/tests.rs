@@ -17,6 +17,7 @@ fn snapshot(
 
 fn record() -> ManagedAgentRecord {
     ManagedAgentRecord {
+        display_only: false,
         pubkey: "p".repeat(64),
         name: "agent".into(),
         persona_id: None,

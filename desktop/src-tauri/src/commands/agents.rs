@@ -822,6 +822,7 @@ pub async fn create_managed_agent(
         )?;
 
         let record = crate::managed_agents::ManagedAgentRecord {
+            display_only: false,
             pubkey: pubkey.clone(),
             name: name.clone(),
             persona_id: requested_persona_id.clone(),
@@ -1095,6 +1096,12 @@ pub async fn start_managed_agent(
         }
 
         let record = find_managed_agent_mut(&mut records, &pubkey)?;
+
+        if record.display_only {
+            return Err(
+                "This agent runs remotely and cannot be started from this device.".to_string(),
+            );
+        }
 
         // Resolve the effective harness for the avatar-fallback derivation in
         // profile reconcile (the create-time snapshot may be empty or stale for

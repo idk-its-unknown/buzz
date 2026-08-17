@@ -187,6 +187,9 @@ mod tests {
             env_vars: BTreeMap::from([("OPENAI_API_KEY".to_string(), "sk-secret".to_string())]),
             start_on_app_launch: true,
             auto_restart_on_config_change: true,
+            // true (non-default) so the exclusion test proves absence from
+            // the wire, not vacuously a default.
+            display_only: true,
             runtime_pid: Some(4242),
             backend: super::super::BackendKind::Provider {
                 id: "buzz-backend-x".to_string(),
@@ -317,6 +320,7 @@ mod tests {
         assert!(!json.contains("name_pool"), "leaked name_pool");
         assert!(!json.contains("is_builtin"), "leaked is_builtin");
         assert!(!json.contains("is_active"), "leaked is_active");
+        assert!(!json.contains("display_only"), "leaked display_only");
         assert!(!json.contains("backend_agent_id"));
         assert!(!json.contains("provider_binary_path"));
         assert!(!json.contains("relay_url"));

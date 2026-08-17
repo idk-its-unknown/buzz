@@ -377,6 +377,12 @@ export type ManagedAgent = {
   autoRestartOnConfigChange: boolean;
   backend: ManagedAgentBackend;
   backendAgentId: string | null;
+  /**
+   * The agent runs on a harness this desktop cannot manage (relay-hosted).
+   * The record exists for display (Agents tab name/avatar, mention picker);
+   * no local lifecycle controls, and mentions publish without a start attempt.
+   */
+  displayOnly: boolean;
   /** Who the agent should respond to. Maps to `buzz-acp --respond-to`. */
   respondTo: RespondToMode;
   /**

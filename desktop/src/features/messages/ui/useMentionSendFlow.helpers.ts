@@ -96,3 +96,12 @@ export function isManagedAgentRunning(agent: ManagedAgent) {
 export function isProviderBackedAgent(agent: ManagedAgent) {
   return agent.backend.type === "provider";
 }
+
+/**
+ * Display-only agents run on a harness this desktop cannot manage
+ * (relay-hosted). Mentioning one must publish to the relay untouched —
+ * never trigger a local or provider start.
+ */
+export function isDisplayOnlyAgent(agent: ManagedAgent) {
+  return agent.displayOnly;
+}

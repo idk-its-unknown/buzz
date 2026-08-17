@@ -64,6 +64,7 @@ mod tests {
 
     fn record_with(runtime: Option<&str>, parallelism: u32) -> ManagedAgentRecord {
         ManagedAgentRecord {
+            display_only: false,
             pubkey: String::new(),
             name: "r".to_string(),
             persona_id: None,

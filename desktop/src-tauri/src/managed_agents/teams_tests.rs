@@ -163,6 +163,7 @@ fn validate_team_deletion_rejects_built_ins() {
 
 fn managed_agent(name: &str) -> ManagedAgentRecord {
     ManagedAgentRecord {
+        display_only: false,
         pubkey: name.to_string(),
         name: name.to_string(),
         persona_id: None,

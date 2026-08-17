@@ -144,7 +144,13 @@ pub fn build_managed_agent_summary(
     let pair_key = workspace_pair_key(app, record);
     let pair_runtime = pair_key.as_ref().and_then(|key| runtimes.get(key));
 
-    let (status, pid, log_path) = if record.backend != BackendKind::Local {
+    let (status, pid, log_path) = if record.display_only {
+        // Display-only agents live on a harness this desktop cannot manage.
+        // Report the remote control-plane status unconditionally so every
+        // frontend "is it running?" check treats them as not-startable; the
+        // real-time signal is relay presence, same as provider-backed agents.
+        ("deployed".to_string(), None, String::new())
+    } else if record.backend != BackendKind::Local {
         // Two-axis status model for remote agents:
         //
         //   Control-plane (this field): "deployed" = provider has been invoked and
@@ -324,6 +330,7 @@ pub fn build_managed_agent_summary(
         env_vars: record.env_vars.clone(),
         backend: record.backend.clone(),
         backend_agent_id: record.backend_agent_id.clone(),
+        display_only: record.display_only,
         status,
         pid,
         created_at: record.created_at.clone(),
