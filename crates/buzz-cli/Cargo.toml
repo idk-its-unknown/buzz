@@ -29,6 +29,9 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Best-effort scrubbing of the private-key string after parsing
+zeroize = { workspace = true }
+
 # Structured error types with exit code mapping
 thiserror = { workspace = true }
 

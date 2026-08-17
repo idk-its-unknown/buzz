@@ -514,9 +514,9 @@ buzz users set-profile 2>&1; echo "exit: $?"
 # exit: 1 (at least one field required)
 
 # Exit 3: No auth configured
-env -u BUZZ_PRIVATE_KEY \
+env -u BUZZ_PRIVATE_KEY -u BUZZ_PRIVATE_KEY_FILE \
   cargo run -p buzz-cli -- channels list 2>&1; echo "exit: $?"
-# stderr: {"error":"auth_error","message":"auth error: BUZZ_PRIVATE_KEY is required (use --private-key or set env var)"}
+# stderr: {"error":"auth_error","message":"auth error: BUZZ_PRIVATE_KEY is required (use --private-key, --private-key-file, or set env var)"}
 # exit: 3
 
 # Not-found returns null, not an error (exit 0)
@@ -536,10 +536,16 @@ Test authentication.
 BUZZ_PRIVATE_KEY="nsec1..." buzz channels list | jq .
 # Should succeed
 
+# Private key from a file (BUZZ_PRIVATE_KEY_FILE / --private-key-file)
+# The file must be a regular file, ≤256 bytes and, on Unix, mode 0600.
+printf 'nsec1...' > key.txt && chmod 600 key.txt
+env -u BUZZ_PRIVATE_KEY BUZZ_PRIVATE_KEY_FILE=key.txt buzz channels list | jq .
+# Should succeed (explicit --private-key / BUZZ_PRIVATE_KEY always wins over the file)
+
 # No auth → exit 3
-env -u BUZZ_PRIVATE_KEY \
+env -u BUZZ_PRIVATE_KEY -u BUZZ_PRIVATE_KEY_FILE \
   cargo run -p buzz-cli -- channels list 2>&1; echo "exit: $?"
-# stderr: {"error":"auth_error","message":"auth error: BUZZ_PRIVATE_KEY is required (use --private-key or set env var)"}
+# stderr: {"error":"auth_error","message":"auth error: BUZZ_PRIVATE_KEY is required (use --private-key, --private-key-file, or set env var)"}
 # exit: 3
 ```
 

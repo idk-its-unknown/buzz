@@ -68,9 +68,10 @@ where
 Buzz CLI — interact with a Buzz relay
 
 Configuration (flags override env vars):
-  BUZZ_RELAY_URL     Relay base URL        [default: http://localhost:3000]
-  BUZZ_PRIVATE_KEY   Nostr private key (hex or nsec)  [required]
-  BUZZ_AUTH_TAG      NIP-OA auth tag JSON  [optional]
+  BUZZ_RELAY_URL          Relay base URL        [default: http://localhost:3000]
+  BUZZ_PRIVATE_KEY        Nostr private key (hex or nsec)  [required unless a key file is given]
+  BUZZ_PRIVATE_KEY_FILE   Path to a file containing the private key  [fallback]
+  BUZZ_AUTH_TAG           NIP-OA auth tag JSON  [optional]
 
 The 'pack' subcommand runs locally and does not require a relay connection.
 
@@ -85,6 +86,19 @@ struct Cli {
     /// Nostr private key (hex or nsec). This is the CLI's identity.
     #[arg(long, env = "BUZZ_PRIVATE_KEY", hide_env_values = true)]
     private_key: Option<String>,
+
+    /// Path to a file containing the private key (hex or nsec). Used only
+    /// when no key is given via --private-key / BUZZ_PRIVATE_KEY. The file
+    /// must be a regular file, at most 256 bytes and, on Unix, mode 0600.
+    /// (The value is a path, not the key itself, but it is hidden from help
+    /// output anyway to satisfy the repo-wide secret-env-arg invariant.)
+    #[arg(
+        long,
+        env = "BUZZ_PRIVATE_KEY_FILE",
+        value_name = "PATH",
+        hide_env_values = true
+    )]
+    private_key_file: Option<std::path::PathBuf>,
 
     /// NIP-OA auth tag JSON (owner attestation). Injected into every signed event.
     #[arg(long, env = "BUZZ_AUTH_TAG", hide_env_values = true)]
@@ -1989,6 +2003,99 @@ fn normalize_auth_tag_input(input: &str) -> String {
     trimmed.to_owned()
 }
 
+/// Max private-key-file size — nsec1 is 63 bytes; hex keys are 64 bytes.
+/// 256 is generous (mirrors git-credential-nostr's keyfile loader).
+const MAX_PRIVATE_KEY_FILE_BYTES: u64 = 256;
+
+#[cfg(unix)]
+fn check_private_key_file_permissions(path: &std::path::Path) -> Result<(), CliError> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = std::fs::metadata(path).map_err(|e| {
+        CliError::Key(format!(
+            "cannot stat private key file {}: {e}",
+            path.display()
+        ))
+    })?;
+    let mode = meta.permissions().mode() & 0o777;
+    if mode & 0o177 != 0 {
+        return Err(CliError::Key(format!(
+            "private key file {} has insecure permissions (expected 0600)",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_private_key_file_permissions(_path: &std::path::Path) -> Result<(), CliError> {
+    // No POSIX mode bits to check on this platform. Deliberately silent
+    // rather than warning like git-credential-nostr's non-Unix branch: the
+    // CLI's stderr contract is pure JSON errors.
+    Ok(())
+}
+
+/// Resolve the CLI's private key from its two sources.
+///
+/// Precedence: an explicit key (`--private-key` flag or `BUZZ_PRIVATE_KEY`
+/// env, already merged by clap with the flag winning) beats a key file
+/// (`--private-key-file` flag or `BUZZ_PRIVATE_KEY_FILE` env, same merge).
+/// The two sources are deliberately NOT a clap conflict: clap counts
+/// env-provided values as present, so a conflict rule would reject layered
+/// deployments that set `BUZZ_PRIVATE_KEY` globally while a harness sets
+/// `BUZZ_PRIVATE_KEY_FILE`. File rules mirror `git-credential-nostr`'s
+/// loader: regular file, ≤256 bytes, 0600 on Unix, content trimmed, empty
+/// rejected.
+fn resolve_private_key(
+    key: Option<String>,
+    key_file: Option<&std::path::Path>,
+) -> Result<String, CliError> {
+    if let Some(key) = key {
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+    let Some(path) = key_file else {
+        return Err(CliError::Auth(
+            "BUZZ_PRIVATE_KEY is required (use --private-key, --private-key-file, or set env var)"
+                .into(),
+        ));
+    };
+    check_private_key_file_permissions(path)?;
+    let meta = std::fs::metadata(path).map_err(|e| {
+        CliError::Key(format!(
+            "cannot stat private key file {}: {e}",
+            path.display()
+        ))
+    })?;
+    if !meta.is_file() {
+        return Err(CliError::Key(format!(
+            "private key file {} is not a regular file",
+            path.display()
+        )));
+    }
+    if meta.len() > MAX_PRIVATE_KEY_FILE_BYTES {
+        return Err(CliError::Key(format!(
+            "private key file {} exceeds {MAX_PRIVATE_KEY_FILE_BYTES}-byte size limit",
+            path.display()
+        )));
+    }
+    let mut raw = std::fs::read_to_string(path).map_err(|e| {
+        CliError::Key(format!(
+            "cannot read private key file {}: {e}",
+            path.display()
+        ))
+    })?;
+    let key = raw.trim().to_string();
+    zeroize::Zeroize::zeroize(&mut raw);
+    if key.is_empty() {
+        return Err(CliError::Key(format!(
+            "private key file {} is empty",
+            path.display()
+        )));
+    }
+    Ok(key)
+}
+
 async fn run(cli: Cli) -> Result<(), CliError> {
     let relay_url = client::normalize_relay_url(&cli.relay);
 
@@ -2002,11 +2109,11 @@ async fn run(cli: Cli) -> Result<(), CliError> {
 
     // Auth: private key is required for all relay operations.
     // The keypair IS the identity — no tokens, no other auth.
-    let private_key_str = cli.private_key.ok_or_else(|| {
-        CliError::Auth("BUZZ_PRIVATE_KEY is required (use --private-key or set env var)".into())
-    })?;
+    let mut private_key_str =
+        resolve_private_key(cli.private_key, cli.private_key_file.as_deref())?;
     let keys = Keys::parse(&private_key_str)
         .map_err(|e| CliError::Key(format!("invalid BUZZ_PRIVATE_KEY: {e}")))?;
+    zeroize::Zeroize::zeroize(&mut private_key_str);
 
     // NIP-OA: parse and verify the auth tag if provided.
     //
@@ -2117,6 +2224,114 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// Test fixture: a key file with sane (0600 on Unix) permissions.
+    fn write_key_file(dir: &tempfile::TempDir, name: &str, contents: &str) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, contents).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        path
+    }
+
+    #[test]
+    fn private_key_beats_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_key_file(&dir, "key.txt", "file-key");
+        let resolved = resolve_private_key(Some("explicit".into()), Some(&path)).unwrap();
+        assert_eq!(resolved, "explicit");
+    }
+
+    #[test]
+    fn empty_explicit_key_falls_through_to_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_key_file(&dir, "key.txt", "file-key");
+        let resolved = resolve_private_key(Some(String::new()), Some(&path)).unwrap();
+        assert_eq!(resolved, "file-key");
+    }
+
+    #[test]
+    fn key_file_content_is_trimmed_and_parses() {
+        let keys = Keys::generate();
+        let hex = keys.secret_key().display_secret().to_string();
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_key_file(&dir, "key.txt", &format!("{hex}\n"));
+        let resolved = resolve_private_key(None, Some(&path)).unwrap();
+        assert_eq!(resolved, hex);
+        assert!(Keys::parse(&resolved).is_ok());
+    }
+
+    #[test]
+    fn missing_both_key_sources_is_auth_error() {
+        let err = resolve_private_key(None, None).unwrap_err();
+        match err {
+            CliError::Auth(msg) => assert!(
+                msg.contains("--private-key-file"),
+                "auth error must name the key-file option: {msg}"
+            ),
+            other => panic!("expected Auth error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nonexistent_key_file_is_key_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing.txt");
+        assert!(matches!(
+            resolve_private_key(None, Some(&path)).unwrap_err(),
+            CliError::Key(_)
+        ));
+    }
+
+    #[test]
+    fn empty_key_file_is_key_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_key_file(&dir, "key.txt", "  \n");
+        match resolve_private_key(None, Some(&path)).unwrap_err() {
+            CliError::Key(msg) => assert!(msg.contains("empty"), "unexpected message: {msg}"),
+            other => panic!("expected Key error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversize_key_file_is_key_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_key_file(&dir, "key.txt", &"x".repeat(257));
+        match resolve_private_key(None, Some(&path)).unwrap_err() {
+            CliError::Key(msg) => {
+                assert!(msg.contains("size limit"), "unexpected message: {msg}");
+            }
+            other => panic!("expected Key error, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn insecure_key_file_permissions_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key.txt");
+        std::fs::write(&path, "file-key").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        match resolve_private_key(None, Some(&path)).unwrap_err() {
+            CliError::Key(msg) => assert!(
+                msg.contains("insecure permissions"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("expected Key error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn private_key_file_flag_parses() {
+        assert!(
+            Cli::try_parse_from(["buzz", "--private-key-file", "key.txt", "channels", "list"])
+                .is_ok()
+        );
     }
 
     #[test]
