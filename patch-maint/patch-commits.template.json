@@ -1,0 +1,34 @@
+{
+  "description": "Carry config for a patched Buzz build. Copy to patch-commits.json beside the scripts and fill in. Read by check-upstream.ps1 and rebase-patches.ps1; humans edit it, scripts never do. Update base_ref and current_branch after every successful rebase.",
+  "repo_path": "",
+  "repo_path_note": "Leave empty to default to the repository containing patch-maint/. Set an absolute path only for an out-of-tree checkout.",
+  "upstream_remote": "upstream",
+  "upstream_main": "upstream/main",
+  "desktop_tag_pattern": "desktop-v*",
+  "base_ref": "<full sha of your upstream base commit>",
+  "base_ref_short": "<short sha>",
+  "base_note": "<how you chose the base, e.g. 'merge-base with upstream/main as of YYYY-MM-DD, just after desktop-vX.Y.Z'>",
+  "current_branch": "<your carry branch name>",
+  "branch_prefix": "patched-",
+  "patch_commits": [
+    {
+      "sha": "<full sha>",
+      "short": "<short sha>",
+      "title": "<commit subject>",
+      "area": "<code area the patch touches, e.g. crates/buzz-cli>",
+      "drop_if": "<the upstream PR/issue whose merge makes this carry obsolete — drop-on-adoption is the whole point>"
+    }
+  ],
+  "watched_paths": [
+    "<repo-relative files your patches touch — the conflict early-warning list>"
+  ],
+  "adoption_patterns": [
+    "<strings to grep upstream commits/diffs for, e.g. your flag names>"
+  ],
+  "upstream_watchlist": {
+    "note": "free-form: PRs/issues to skim on every release"
+  },
+  "known_windows_test_failures": [
+    "<test names that fail on your machine at the CLEAN base — verified environment artifacts only. A gate run passes iff its only failures are on this list.>"
+  ]
+}
