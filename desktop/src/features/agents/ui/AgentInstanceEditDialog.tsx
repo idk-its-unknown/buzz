@@ -8,11 +8,13 @@ import {
   useAgentConfigSurface,
   useBakedBuildEnvKeysQuery,
   usePersonasQuery,
+  useSetManagedAgentAvatarMutation,
   useStartManagedAgentMutation,
   useUpdateManagedAgentMutation,
 } from "@/features/agents/hooks";
 import { useAgentAccessOwnerOnlyQuery } from "@/features/agents/useAgentAccessOwnerOnly";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
+import { useUserProfileQuery } from "@/features/profile/hooks";
 import type {
   ManagedAgent,
   RespondToMode,
@@ -50,7 +52,7 @@ import {
   relayMeshModelPickerState,
 } from "./relayMeshModelPicker";
 import {
-  computeEditAgentFormValidity,
+  computeEditAgentPartialValidity,
   envVarsEqual,
   isEditAgentProviderSaveValid,
   resolveAgentCommandUpdate,
@@ -114,9 +116,15 @@ export function AgentInstanceEditDialog({
   onUpdated?: (agent: ManagedAgent) => void;
 }) {
   const updateMutation = useUpdateManagedAgentMutation();
+  const setAvatarMutation = useSetManagedAgentAvatarMutation();
   const startMutation = useStartManagedAgentMutation();
   const runtimesQuery = useAcpRuntimesQuery({ enabled: open });
   const configSurfaceQuery = useAgentConfigSurface(open ? agent.pubkey : null);
+  // Display-only agents publish their real instructions in their kind:0
+  // profile `about`; the Advanced section shows it read-only.
+  const wireProfileQuery = useUserProfileQuery(
+    open && agent.displayOnly ? agent.pubkey : undefined,
+  );
   const runtimes = runtimesQuery.data ?? [];
 
   const [name, setName] = React.useState(agent.name);
@@ -145,6 +153,10 @@ export function AgentInstanceEditDialog({
   const [envVars, setEnvVars] = React.useState<EnvVarsValue>(agent.envVars);
   const [autoRestartOnConfigChange, setAutoRestartOnConfigChange] =
     React.useState(agent.autoRestartOnConfigChange);
+  // Failure surface for the submit legs updateMutation doesn't cover (the
+  // avatar mutation and the auto-restart setter) — without it those reject
+  // into the catch below and the dialog just silently stays open.
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
   const personasQuery = usePersonasQuery();
   const linkedPersona = React.useMemo(
     () =>
@@ -197,7 +209,12 @@ export function AgentInstanceEditDialog({
       setRespondTo(agent.respondTo);
       setRespondToAllowlist(agent.respondToAllowlist);
       setAvatarUrl(agent.avatarUrl ?? "");
-      setShowAdvancedFields(false);
+      // Focus targets that live inside the Advanced section need it expanded
+      // before the focus effect can reach their element.
+      setShowAdvancedFields(
+        initialFocus?.type === "system_prompt" ||
+          initialFocus?.type === "env_key",
+      );
       setIsAvatarUploadPending(false);
       setIsAddHarnessOpen(false);
       runtimeTouched.current = false;
@@ -205,6 +222,7 @@ export function AgentInstanceEditDialog({
         runtimes.find((r) => r.command?.trim() === agent.agentCommand.trim()) ??
         runtimes.find((r) => r.id === agent.agentCommand.trim());
       setSelectedRuntimeId(matched ? matched.id : "custom");
+      setSubmitError(null);
       updateMutation.reset();
     }
   }, [open, agent.pubkey]);
@@ -342,6 +360,27 @@ export function AgentInstanceEditDialog({
 
     return () => cancelAnimationFrame(id);
   }, [open, initialFocus, agent.pubkey, llmProviderFieldVisible]);
+
+  // system_prompt deep-link: the reset effect expands Advanced; focus the
+  // textarea once it is in the DOM (double rAF rides out the section's
+  // mount + expand animation start).
+  React.useEffect(() => {
+    if (!open || initialFocus?.type !== "system_prompt") return;
+    let inner: number | undefined;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
+        const el = document.getElementById("edit-agent-system-prompt");
+        if (el instanceof HTMLElement) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.focus();
+        }
+      });
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      if (inner !== undefined) cancelAnimationFrame(inner);
+    };
+  }, [open, initialFocus, agent.pubkey]);
 
   // Provider + env to PERSIST on submit — also fed to the credential gate so gate, saved record,
   // and spawn snapshot all agree on one resolved value. See resolveInheritedRuntimeSubmission.
@@ -599,64 +638,53 @@ export function AgentInstanceEditDialog({
     originalRuntimeSupportsProvider,
   });
 
-  const canSubmit =
-    computeEditAgentFormValidity({
-      name,
-      parallelism,
-      agentAcpCommand: agent.acpCommand,
-      acpCommand,
-      respondTo,
-      respondToAllowlistLength: respondToAllowlist.length,
-      selectedRuntimeId,
+  // The submit plan is computed in render scope (not inside handleSubmit) so
+  // dirtiness can drive Save enablement: the input already carries ONLY
+  // changed fields, so "anything to save?" and "what would we save?" are the
+  // same object. Partial-save contract: any single dirty field enables Save;
+  // validity clauses apply only to dirty fields (see
+  // computeEditAgentPartialValidity).
+  const submitPlan = React.useMemo(() => {
+    const parsedParallelism = Number.parseInt(parallelism, 10);
+    const parsedArgs = agentArgs
+      .split(",")
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+    // Model to persist — from the shared inherited-submission snapshot so a
+    // provider-backed inherit-transition carries the persona model (readiness
+    // requires one) and a deliberate local model still wins.
+    const normalizedModel = inheritedSubmission.model;
+
+    // Harness pin resolution — see resolveAgentCommandUpdate for the full
+    // sentinel/pin/no-op contract, including the inherit→pin transition where
+    // the prefilled command equals the original but must still be pinned.
+    const agentCommandUpdate = resolveAgentCommandUpdate({
       inheritHarness,
+      hasPersona: agent.personaId != null,
       agentCommand,
-      requiredEnvKeyMissing,
-    }) &&
-    providerValid &&
-    !updateMutation.isPending &&
-    !isAvatarUploadPending;
+      originalAgentCommand: agent.agentCommand,
+      agentCommandOverride: agent.agentCommandOverride ?? null,
+    });
 
-  async function handleSubmit() {
-    try {
-      const parsedParallelism = Number.parseInt(parallelism, 10);
-      const parsedArgs = agentArgs
-        .split(",")
-        .map((v) => v.trim())
-        .filter((v) => v.length > 0);
-      // Model to persist — from the shared inherited-submission snapshot so a
-      // provider-backed inherit-transition carries the persona model (readiness
-      // requires one) and a deliberate local model still wins.
-      const normalizedModel = inheritedSubmission.model;
+    // Classify the effective post-submit runtime's provider capability as a
+    // tri-state: "capable" persists the provider, "locked" clears it (only
+    // when we KNOW it's provider-locked, e.g. Claude), "unknown" OMITS it so a
+    // transient/custom state never becomes a destructive write. Resolved
+    // STATICALLY (by id) so a not-yet-loaded catalog can't misclassify a known
+    // runtime as "unknown" — see resolveRuntimeProviderCapability. The runtime
+    // id is the shared prospectiveRuntimeId, so submit and the block-save gate
+    // always agree on which runtime is being saved.
+    const providerRuntimeCapability = resolveRuntimeProviderCapability(
+      prospectiveRuntimeId,
+      runtimeSupportsLlmProviderSelection(prospectiveRuntimeId),
+    );
 
-      // Harness pin resolution — see resolveAgentCommandUpdate for the full
-      // sentinel/pin/no-op contract, including the inherit→pin transition where
-      // the prefilled command equals the original but must still be pinned.
-      const agentCommandUpdate = resolveAgentCommandUpdate({
-        inheritHarness,
-        agentCommand,
-        originalAgentCommand: agent.agentCommand,
-        agentCommandOverride: agent.agentCommandOverride ?? null,
-      });
-
-      // Classify the effective post-submit runtime's provider capability as a
-      // tri-state: "capable" persists the provider, "locked" clears it (only
-      // when we KNOW it's provider-locked, e.g. Claude), "unknown" OMITS it so a
-      // transient/custom state never becomes a destructive write. Resolved
-      // STATICALLY (by id) so a not-yet-loaded catalog can't misclassify a known
-      // runtime as "unknown" — see resolveRuntimeProviderCapability. The runtime
-      // id is the shared prospectiveRuntimeId, so submit and the block-save gate
-      // always agree on which runtime is being saved.
-      const providerRuntimeCapability = resolveRuntimeProviderCapability(
-        prospectiveRuntimeId,
-        runtimeSupportsLlmProviderSelection(prospectiveRuntimeId),
-      );
-
-      // Provider + env to persist — the shared inherited-submission snapshot
-      // (same values the credential gate validates), so gate ↔ record ↔ spawn
-      // all agree. See resolveInheritedRuntimeSubmission.
-      const normalizedSubmitProvider = inheritedSubmission.provider;
-      const submitEnvVars = inheritedSubmission.envVars;
-      const input: UpdateManagedAgentInput = {
+    // Provider + env to persist — the shared inherited-submission snapshot
+    // (same values the credential gate validates), so gate ↔ record ↔ spawn
+    // all agree. See resolveInheritedRuntimeSubmission.
+    const normalizedSubmitProvider = inheritedSubmission.provider;
+    const submitEnvVars = inheritedSubmission.envVars;
+    const input: UpdateManagedAgentInput = {
         pubkey: agent.pubkey,
         name: name.trim() !== agent.name ? name.trim() : undefined,
         // relayUrl deliberately never submitted: the legacy per-record pin is
@@ -727,29 +755,134 @@ export function AgentInstanceEditDialog({
             : undefined,
       };
 
-      const result = await updateMutation.mutateAsync(input);
-      if (autoRestartOnConfigChange !== agent.autoRestartOnConfigChange) {
+    const recordFieldDirty = Object.entries(input).some(
+      ([key, value]) => key !== "pubkey" && value !== undefined,
+    );
+    const avatarDirty = (avatarUrl.trim() || null) !== (agent.avatarUrl ?? null);
+    const autoRestartDirty =
+      autoRestartOnConfigChange !== agent.autoRestartOnConfigChange;
+    const dirty = {
+      name: input.name !== undefined,
+      // Blank means "leave unchanged" (the payload derivation sends nothing
+      // for it), so it is not dirty and must not block Save for other edits.
+      parallelism:
+        parallelism.trim() !== "" &&
+        parallelism.trim() !== String(agent.parallelism),
+      acpCommand: acpCommand.trim() !== agent.acpCommand,
+      harness: agentCommandUpdate != null,
+      respondTo:
+        respondTo !== agent.respondTo ||
+        (respondTo === "allowlist" &&
+          respondToAllowlist.join(",") !== agent.respondToAllowlist.join(",")),
+      spawnConfig:
+        agentCommandUpdate != null ||
+        input.model !== undefined ||
+        input.provider !== undefined ||
+        input.envVars !== undefined,
+    };
+    return {
+      input,
+      recordFieldDirty,
+      avatarDirty,
+      autoRestartDirty,
+      dirty,
+      hasChanges: recordFieldDirty || avatarDirty || autoRestartDirty,
+    };
+  }, [
+    parallelism,
+    agentArgs,
+    inheritedSubmission,
+    inheritHarness,
+    agentCommand,
+    agent,
+    prospectiveRuntimeId,
+    name,
+    acpCommand,
+    systemPrompt,
+    linkedPersona,
+    respondTo,
+    respondToAllowlist,
+    avatarUrl,
+    autoRestartOnConfigChange,
+  ]);
+
+  const canSubmit =
+    submitPlan.hasChanges &&
+    computeEditAgentPartialValidity(
+      {
+        name,
+        parallelism,
+        agentAcpCommand: agent.acpCommand,
+        acpCommand,
+        respondTo,
+        respondToAllowlistLength: respondToAllowlist.length,
+        selectedRuntimeId,
+        inheritHarness,
+        agentCommand,
+        requiredEnvKeyMissing,
+      },
+      submitPlan.dirty,
+    ) &&
+    (!submitPlan.dirty.spawnConfig || providerValid) &&
+    !updateMutation.isPending &&
+    !setAvatarMutation.isPending &&
+    !isAvatarUploadPending;
+
+  async function handleSubmit() {
+    setSubmitError(null);
+    try {
+      let updatedAgent = agent;
+      let recordResult: Awaited<
+        ReturnType<typeof updateMutation.mutateAsync>
+      > | null = null;
+      if (submitPlan.recordFieldDirty) {
+        recordResult = await updateMutation.mutateAsync(submitPlan.input);
+        updatedAgent = recordResult.agent;
+      }
+      if (submitPlan.autoRestartDirty) {
         // Standalone setter (mirrors start-on-app-launch) — not part of
         // UpdateManagedAgentInput, so the frozen update shape stays frozen.
-        await setManagedAgentAutoRestart(
+        updatedAgent = await setManagedAgentAutoRestart(
           agent.pubkey,
           autoRestartOnConfigChange,
         );
       }
-      showAgentProfileSyncWarning(result.agent.name, result.profileSyncError);
+      if (submitPlan.avatarDirty) {
+        // Avatar rides its own partial-update command so it saves regardless
+        // of the rest of the form (and for display-only agents, where it is
+        // the main locally-owned field).
+        updatedAgent = await setAvatarMutation.mutateAsync({
+          avatarUrl: avatarUrl.trim() || null,
+          pubkey: agent.pubkey,
+        });
+      }
+      if (recordResult) {
+        showAgentProfileSyncWarning(
+          recordResult.agent.name,
+          recordResult.profileSyncError,
+        );
+      }
       handleOpenChange(false);
-      onUpdated?.(result.agent);
+      onUpdated?.(updatedAgent);
       // The auto-restart policy deliberately never fires for a stopped or
       // failing agent (a broken agent must not auto-loop), so an edit meant
       // to FIX one silently waits for a manual start. Offer that start
       // explicitly instead of relying on the user to know the policy.
-      if (!isManagedAgentActive(result.agent)) {
-        const startedName = result.agent.name;
+      // Scoped to real record edits: avatar/auto-restart-only saves change
+      // nothing about how the agent runs, and display-only agents are never
+      // locally startable.
+      if (
+        recordResult &&
+        !agent.displayOnly &&
+        !isManagedAgentActive(recordResult.agent)
+      ) {
+        const startedName = recordResult.agent.name;
+        const startedPubkey = recordResult.agent.pubkey;
         toast(`${startedName} saved while stopped.`, {
           action: {
             label: "Start now",
             onClick: () => {
-              startMutation.mutate(result.agent.pubkey, {
+              startMutation.mutate(startedPubkey, {
                 onSuccess: () => toast.success(`${startedName} started.`),
                 onError: (error) =>
                   toast.error(
@@ -762,8 +895,12 @@ export function AgentInstanceEditDialog({
           },
         });
       }
-    } catch {
-      // React Query stores the error; keep dialog open and render it inline.
+    } catch (error) {
+      // Keep the dialog open and render the failure inline. updateMutation
+      // failures also land in updateMutation.error (which the error block
+      // prefers); submitError is the only surface for the avatar and
+      // auto-restart legs.
+      setSubmitError(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -878,14 +1015,16 @@ export function AgentInstanceEditDialog({
         }
       >
         <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-          {/* Avatar is definition-level identity. hideEditControl suppresses
-              the internal pencil badge; the CTA below is the only edit path. */}
+          {/* Avatar edits in place (upload / URL / emoji) and persists via its
+              own partial-update command on Save, independent of form validity.
+              The persona CTA remains as the definition-level path when the
+              linked definition is editable. */}
           <div className="flex flex-col items-center gap-2">
             <AgentCreationPreview
               avatarUrl={previewAvatarUrl}
-              hideEditControl
               label={previewLabel}
               onClearAvatar={() => setAvatarUrl("")}
+              onCommitAvatar={setAvatarUrl}
               onUploadPendingChange={setIsAvatarUploadPending}
               onSelectAvatar={setAvatarUrl}
             />
@@ -900,13 +1039,16 @@ export function AgentInstanceEditDialog({
                 type="button"
                 variant="outline"
               >
-                Edit avatar
+                Edit in persona
               </Button>
-            ) : (
+            ) : null}
+            {agent.displayOnly ? (
               <p className="text-center text-xs text-muted-foreground">
-                Avatar is shared identity
+                Runs remotely — edits here update this device&apos;s record;
+                runtime config lives on the agent&apos;s host (see
+                patch-maint/DEPLOYMENT-NOTES.md).
               </p>
-            )}
+            ) : null}
           </div>
           <div className="space-y-5">
             <div className="space-y-1.5">
@@ -1179,6 +1321,12 @@ export function AgentInstanceEditDialog({
                       agentArgs={agentArgs}
                       autoRestartOnConfigChange={autoRestartOnConfigChange}
                       disabled={updateMutation.isPending}
+                      displayOnly={agent.displayOnly}
+                      publishedInstructions={
+                        agent.displayOnly
+                          ? (wireProfileQuery.data?.about ?? null)
+                          : null
+                      }
                       envVars={envVars}
                       fileSatisfiedEnvKeys={fileSatisfiedEnvKeys}
                       hiddenEnvKeys={
@@ -1213,11 +1361,15 @@ export function AgentInstanceEditDialog({
               </AnimatePresence>
             </div>
 
-            {/* Error */}
+            {/* Error — updateMutation renders its own failure; submitError
+                covers the other submit legs (avatar, auto-restart), which
+                otherwise fail with no surface at all. */}
             {updateMutation.error instanceof Error ? (
               <p className="text-sm text-destructive">
                 {updateMutation.error.message}
               </p>
+            ) : submitError ? (
+              <p className="text-sm text-destructive">{submitError}</p>
             ) : null}
           </div>
         </div>

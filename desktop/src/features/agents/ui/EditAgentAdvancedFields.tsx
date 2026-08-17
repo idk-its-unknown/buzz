@@ -2,6 +2,7 @@ import * as React from "react";
 import { cn } from "@/shared/lib/cn";
 import { Input } from "@/shared/ui/input";
 import { Textarea } from "@/shared/ui/textarea";
+import { CopyButton } from "./CopyButton";
 import { EnvVarsEditor, type EnvVarsValue } from "./EnvVarsEditor";
 import {
   CARD_MINT_KEY_ANNOTATIONS,
@@ -36,11 +37,13 @@ export function EditAgentAdvancedFields({
   disabled,
   envVars,
   fileSatisfiedEnvKeys,
+  displayOnly = false,
   hiddenEnvKeys = [],
   focusKey,
   inheritedEnvVars,
   inheritHarness,
   linkedPersona,
+  publishedInstructions = null,
   model,
   modelTuningRuntimeId,
   parallelism,
@@ -64,6 +67,18 @@ export function EditAgentAdvancedFields({
   envVars: EnvVarsValue;
   fileSatisfiedEnvKeys: readonly string[];
   hiddenEnvKeys?: readonly string[];
+  /**
+   * Display-only (remote-harness) record: relabels the prompt field as
+   * "Agent instructions" to match the profile panel's row for these agents,
+   * shows the agent's own published instructions (kind:0 `about`) above it,
+   * and offers a copy-ready change request to paste at the agent.
+   */
+  displayOnly?: boolean;
+  /**
+   * The agent's self-published instructions (its kind:0 profile `about`).
+   * Display-only records only; null/absent when the agent has not published.
+   */
+  publishedInstructions?: string | null;
   /** When set, EnvVarsEditor scrolls and focuses this key's input on mount. */
   focusKey?: string;
   inheritedEnvVars: Record<string, string>;
@@ -297,15 +312,41 @@ export function EditAgentAdvancedFields({
         </div>
       </div>
 
-      {/* System prompt override — hidden for linked instances; the persona
-          definition is authoritative and the backend will reject any override. */}
+      {/* System prompt — hidden for linked instances; the persona definition
+          is authoritative and the backend will reject any override. For
+          display-only (remote-harness) records the same field is the agent's
+          instructions — the panel's "Agent instructions" row deep-links here,
+          so the label must match it, not the local-spawn "override" framing. */}
       {linkedPersona == null && (
         <div className="space-y-1.5">
+          {displayOnly ? (
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium text-foreground">
+                Current instructions (published by the agent)
+              </span>
+              {publishedInstructions?.trim() ? (
+                <div
+                  className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-xl bg-muted/20 px-3 py-3 text-sm leading-5 text-muted-foreground"
+                  data-testid="edit-agent-published-instructions"
+                >
+                  {publishedInstructions.trim()}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  This agent has not published its instructions yet — ask it to
+                  publish its SOUL.md to its profile (see
+                  patch-maint/DEPLOYMENT-NOTES.md).
+                </p>
+              )}
+            </div>
+          ) : null}
           <label
             className="text-sm font-medium text-foreground"
             htmlFor="edit-agent-system-prompt"
           >
-            System prompt override
+            {displayOnly
+              ? "Request an instructions change"
+              : "System prompt override"}
             <span className={PERSONA_LABEL_OPTIONAL_CLASS}>Optional</span>
           </label>
           <div className={PERSONA_FIELD_SHELL_CLASS}>
@@ -317,10 +358,30 @@ export function EditAgentAdvancedFields({
               disabled={disabled}
               id="edit-agent-system-prompt"
               onChange={(event) => onSystemPromptChange(event.target.value)}
-              placeholder="Leave blank to send no ACP system prompt"
+              placeholder={
+                displayOnly
+                  ? "Draft the instructions you want this agent to adopt"
+                  : "Leave blank to send no ACP system prompt"
+              }
               value={systemPrompt}
             />
           </div>
+          {displayOnly ? (
+            <div className="space-y-1.5">
+              {systemPrompt.trim() ? (
+                <CopyButton
+                  label="Copy change request"
+                  value={`Please replace your instructions with the following, update your SOUL.md accordingly, and republish your profile about:\n\n${systemPrompt.trim()}`}
+                />
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                The agent&apos;s brain lives on its host. To change it: draft
+                above, copy the request, then mention the agent in its channel
+                and paste — it updates itself and republishes, and the current
+                instructions above will refresh.
+              </p>
+            </div>
+          ) : null}
         </div>
       )}
 

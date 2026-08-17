@@ -838,7 +838,12 @@ pub async fn update_managed_agent(
         // update that touched only runtime/local fields is a no-op publish.
         super::agents::retain_managed_agent_pending(&app, &state, record);
 
-        let sync_params = if name_changed {
+        // Display-only records hold no key material — their kind:0 profile is
+        // owned by the agent on its remote harness, not by this desktop. A
+        // rename here updates only the local registry (and the kind:30177
+        // projection above); attempting the republish would Keys::parse an
+        // empty nsec and fail AFTER the save already landed.
+        let sync_params = if name_changed && !record.display_only {
             let agent_keys = Keys::parse(&record.private_key_nsec)
                 .map_err(|e| format!("failed to parse agent keys: {e}"))?;
             // Re-publish the renamed profile to the agent's effective relay:

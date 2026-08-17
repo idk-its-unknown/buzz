@@ -23,6 +23,7 @@ import { UnifiedAgentsSection } from "./UnifiedAgentsSection";
 import { useManagedAgentActions } from "./useManagedAgentActions";
 import { usePersonaActions } from "./usePersonaActions";
 import { useTeamActions } from "./useTeamActions";
+import type { ManagedAgent } from "@/shared/api/types";
 import { useProfilePanel } from "@/shared/context/ProfilePanelContext";
 import { useBakedBuildEnvQuery } from "@/features/agents/hooks";
 import { isManagedAgentActive } from "@/features/agents/lib/managedAgentControlActions";
@@ -49,6 +50,11 @@ export function AgentsView() {
   const fullAiDefaultsTriggerRef = React.useRef<HTMLButtonElement>(null);
   const compactActionsTriggerRef = React.useRef<HTMLButtonElement>(null);
   const [isAiDefaultsOpen, setIsAiDefaultsOpen] = React.useState(false);
+  // Instance-edit dialog target for display-only (remote-harness) agents —
+  // set by the Remote agents group's Edit affordance; opens the same full
+  // configuration dialog every agent edit uses.
+  const [remoteEditAgent, setRemoteEditAgent] =
+    React.useState<ManagedAgent | null>(null);
 
   function openUnifiedCatalog() {
     personas.prepareCreate();
@@ -260,6 +266,7 @@ export function AgentsView() {
               onOpenCatalog={openUnifiedCatalog}
               onDuplicatePersona={personas.openDuplicate}
               onEditPersona={personas.openEdit}
+              onEditDisplayOnlyAgent={setRemoteEditAgent}
               onSharePersona={personas.openShare}
               onDeactivatePersona={(persona) => {
                 void personas.handleSetActive(persona, false, "library");
@@ -294,6 +301,17 @@ export function AgentsView() {
           </div>
         </div>
       </div>
+
+      {remoteEditAgent ? (
+        <AgentDialog
+          agent={remoteEditAgent}
+          mode="instance-edit"
+          open
+          onOpenChange={(open) => {
+            if (!open) setRemoteEditAgent(null);
+          }}
+        />
+      ) : null}
 
       <AgentDefaultsDialog
         onOpenChange={setAiDefaultsDialogOpen}

@@ -19,6 +19,7 @@ import { AgentIdentityCard } from "./AgentIdentityCard";
 import { AgentRuntimeAvatarControl } from "./AgentRuntimeAvatarControl";
 import { CreateIdentityCard } from "./CreateIdentityCard";
 import { PersonaActionsMenu } from "./PersonaActionsMenu";
+import { RemoteAgentActionsMenu } from "./RemoteAgentActionsMenu";
 import { buildUnifiedGroups } from "./unifiedAgentGroups";
 
 type UnifiedAgentsSectionProps = {
@@ -49,6 +50,11 @@ type UnifiedAgentsSectionProps = {
   onOpenCatalog: () => void;
   onDuplicatePersona: (persona: AgentPersona) => void;
   onEditPersona: (persona: AgentPersona) => void;
+  /**
+   * Edit affordance for a display-only (remote-harness) agent card in the
+   * "Remote agents" group: opens the full instance-edit dialog on the record.
+   */
+  onEditDisplayOnlyAgent: (agent: ManagedAgent) => void;
   onSharePersona: (
     persona: AgentPersona,
     linkedAgent: ManagedAgent | undefined,
@@ -89,12 +95,13 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
     onOpenCatalog,
     onDuplicatePersona,
     onEditPersona,
+    onEditDisplayOnlyAgent,
     onSharePersona,
     onDeactivatePersona,
     onDeletePersona,
   } = props;
 
-  const { groups, ungrouped, unknown } = React.useMemo(
+  const { groups, ungrouped, unknown, remote } = React.useMemo(
     () => buildUnifiedGroups(personas, agents),
     [personas, agents],
   );
@@ -166,6 +173,27 @@ export function UnifiedAgentsSection(props: UnifiedAgentsSectionProps) {
             })}
           </div>
 
+          {remote.length > 0 ? (
+            <CollapsibleAgentGroup
+              agents={remote}
+              collapsed={collapsed}
+              defaultModel={defaultModel}
+              groupKey="__remote__"
+              label="Remote agents"
+              renderActions={(agent) => (
+                <RemoteAgentActionsMenu
+                  agent={agent}
+                  onEdit={onEditDisplayOnlyAgent}
+                />
+              )}
+              restartingAgentPubkey={restartingAgentPubkey}
+              startingAgentPubkey={startingAgentPubkey}
+              onToggle={toggle}
+              onOpenAgentProfile={onOpenAgentProfile}
+              onRestartAgent={onRestartAgent}
+              onStartAgent={onStartAgent}
+            />
+          ) : null}
           {unknown.length > 0 ? (
             <CollapsibleAgentGroup
               agents={unknown}
@@ -258,8 +286,15 @@ function AgentPersonaCard({
   });
   const isActive = agent ? isManagedAgentActive(agent) : false;
   const profileQuery = useUserProfileQuery(agent?.pubkey);
+  // Display-only agents: the locally-set record avatar wins so an in-app edit
+  // repaints immediately; wire kind:0 (then persona) is the fallback.
   const avatarUrl = agent
-    ? resolveAgentCardAvatarUrl(profileQuery.data?.avatarUrl, persona.avatarUrl)
+    ? agent.displayOnly && agent.avatarUrl
+      ? agent.avatarUrl
+      : resolveAgentCardAvatarUrl(
+          profileQuery.data?.avatarUrl,
+          persona.avatarUrl,
+        )
     : persona.avatarUrl;
   const friendlyError = agent
     ? friendlyAgentLastError(agent.lastError, agent.lastErrorCode)?.copy
@@ -334,6 +369,7 @@ function AgentPersonaCard({
 }
 
 function StandaloneAgentCard({
+  actions,
   agent,
   defaultModel,
   restartingAgentPubkey,
@@ -342,6 +378,7 @@ function StandaloneAgentCard({
   onRestartAgent,
   onStartAgent,
 }: {
+  actions?: React.ReactNode;
   agent: ManagedAgent;
   defaultModel: string;
   restartingAgentPubkey: string | null;
@@ -355,6 +392,12 @@ function StandaloneAgentCard({
 }) {
   const title = agent.name;
   const profileQuery = useUserProfileQuery(agent.pubkey);
+  // Same precedence as the persona card: a display-only agent's locally-set
+  // record avatar wins over the wire kind:0 profile.
+  const cardAvatarUrl =
+    agent.displayOnly && agent.avatarUrl
+      ? agent.avatarUrl
+      : profileQuery.data?.avatarUrl;
   const friendlyError = friendlyAgentLastError(
     agent.lastError,
     agent.lastErrorCode,
@@ -364,11 +407,12 @@ function StandaloneAgentCard({
 
   return (
     <AgentIdentityCard
+      actions={actions}
       ariaLabel={`${title} agent profile`}
       avatar={
         <AgentRuntimeAvatarControl
           activeTestId={`agent-runtime-active-${agent.pubkey}`}
-          avatarUrl={profileQuery.data?.avatarUrl}
+          avatarUrl={cardAvatarUrl}
           errorLabel={friendlyError}
           errorTestId={`agent-runtime-error-${agent.pubkey}`}
           isActive={isActive}
@@ -387,7 +431,7 @@ function StandaloneAgentCard({
           }
         />
       }
-      avatarUrl={profileQuery.data?.avatarUrl}
+      avatarUrl={cardAvatarUrl}
       dataTestId={`managed-agent-${agent.pubkey}`}
       label={title}
       modelLabel={resolveAgentCardModelLabel({
@@ -438,6 +482,7 @@ function CollapsibleAgentGroup({
   agents,
   collapsed,
   defaultModel,
+  renderActions,
   restartingAgentPubkey,
   startingAgentPubkey,
   onToggle,
@@ -450,6 +495,8 @@ function CollapsibleAgentGroup({
   agents: ManagedAgent[];
   collapsed: ReadonlySet<string>;
   defaultModel: string;
+  /** Per-card actions affordance (e.g. the Remote agents ⋮ menu). */
+  renderActions?: (agent: ManagedAgent) => React.ReactNode;
   restartingAgentPubkey: string | null;
   startingAgentPubkey: string | null;
   onToggle: (key: string) => void;
@@ -480,6 +527,7 @@ function CollapsibleAgentGroup({
         <div className={IDENTITY_CARD_GRID_CLASS}>
           {agents.map((agent) => (
             <StandaloneAgentCard
+              actions={renderActions?.(agent)}
               agent={agent}
               defaultModel={defaultModel}
               key={agent.pubkey}

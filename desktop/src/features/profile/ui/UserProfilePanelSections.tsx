@@ -72,6 +72,8 @@ export type ProfileSummaryViewProps = {
   handleAgentPrimaryAction: () => void;
   handleAgentRestart: () => void;
   handleEditAgent: () => void;
+  /** Instructions-row deep-link — opens the editor focused on the prompt. */
+  handleEditAgentInstructions?: () => void;
   handleToggleAgentAutoStart: () => void;
   handleEditPersona?: () => void;
   handleHuddle?: () => void;
@@ -148,6 +150,7 @@ export function ProfileSummaryView({
   handleAgentPrimaryAction,
   handleAgentRestart,
   handleEditAgent,
+  handleEditAgentInstructions,
   handleToggleAgentAutoStart,
   handleEditPersona,
   handleHuddle,
@@ -212,9 +215,15 @@ export function ProfileSummaryView({
   });
 
   const showMemoriesTab = isOwner === true && Boolean(pubkey);
+  // Persona-backed agents get the row via handleEditPersona. Persona-less
+  // records (display-only fleet mirrors, legacy standalones) own their
+  // instructions on the record itself, so an editable managed agent shows
+  // the row too — the instance-edit dialog is its editor.
   const showInstructionBlock =
     isOwner === true &&
-    (agentInstruction !== null || handleEditPersona !== undefined);
+    (agentInstruction !== null ||
+      handleEditPersona !== undefined ||
+      (canEditAgent && managedAgent !== undefined));
   const showChannelsTab =
     channelsLoading || channelCount > 0 || isBot || relayAgent !== undefined;
   const runtimeConfigurationFields = agentSettingsFields.filter((field) =>
@@ -515,6 +524,7 @@ export function ProfileSummaryView({
                 isDeleteAgentPending={isAgentActionPending}
                 managedAgent={managedAgent}
                 onEditAgent={handleEditAgent}
+                onEditAgentInstructions={handleEditAgentInstructions}
                 onCreateCard={onCreateCard}
                 onDeleteAgent={onDeleteAgent}
                 onDuplicateAgent={onDuplicateAgent}

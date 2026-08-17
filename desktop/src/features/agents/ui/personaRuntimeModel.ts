@@ -66,9 +66,19 @@ export function shouldClearModelForRuntimeChange(
  *   update would be omitted and the agent would keep inheriting. An empty
  *   command never reaches the force branch (the caller blocks Save for an empty
  *   pinned custom command; catalog runtimes always set a concrete command).
+ *
+ * The forced pin exists ONLY for records that can inherit at all
+ * (`hasPersona`). A persona-less record — every display-only fleet mirror and
+ * every legacy definition-less agent — rests at `inheritHarness: false` with
+ * no override and a non-empty resolved command; without the `hasPersona` gate
+ * that resting state matches the force branch and the dialog opens
+ * harness-dirty with zero edits (Save enabled at open, spurious override pins
+ * written onto keyless records).
  */
 export function resolveAgentCommandUpdate(input: {
   inheritHarness: boolean;
+  /** Whether the record is linked to a persona (inheritance exists at all). */
+  hasPersona: boolean;
   /** The command currently in the (possibly prefilled) input. */
   agentCommand: string;
   /** The resolved effective command the dialog opened with. */
@@ -80,7 +90,8 @@ export function resolveAgentCommandUpdate(input: {
     return input.agentCommandOverride != null ? "" : undefined;
   }
   const pinnedCommand = input.agentCommand.trim();
-  const pinningFromInherit = input.agentCommandOverride == null;
+  const pinningFromInherit =
+    input.hasPersona && input.agentCommandOverride == null;
   if (
     pinnedCommand !== input.originalAgentCommand ||
     (pinningFromInherit && pinnedCommand.length > 0)
@@ -267,6 +278,64 @@ export function computeEditAgentFormValidity(
     respondToValid &&
     customCommandValid &&
     !input.requiredEnvKeyMissing
+  );
+}
+
+/**
+ * Which parts of the edit form the user has actually changed. Each flag scopes
+ * its validity clause in {@link computeEditAgentPartialValidity}: untouched
+ * fields never block a save, so a record with incomplete unrelated config
+ * (e.g. a display-only stub) can still take a one-field edit.
+ */
+export type EditAgentDirtyFields = {
+  name: boolean;
+  parallelism: boolean;
+  acpCommand: boolean;
+  harness: boolean;
+  respondTo: boolean;
+  /** model / provider / env / harness — anything that shapes the next spawn. */
+  spawnConfig: boolean;
+};
+
+/**
+ * Partial-save validity: the same clauses as
+ * {@link computeEditAgentFormValidity}, but each gated on its field actually
+ * being dirty. The submit path already sends only changed fields, so the only
+ * thing validity must guarantee is that every field ABOUT TO BE SENT is sane —
+ * demanding whole-form completeness just blocks one-field edits.
+ */
+export function computeEditAgentPartialValidity(
+  input: EditAgentFormValidityInput,
+  dirty: EditAgentDirtyFields,
+): boolean {
+  const parsedParallelism = Number.parseInt(input.parallelism, 10);
+  const nameValid = !dirty.name || input.name.trim().length > 0;
+  const parallelismValid =
+    !dirty.parallelism ||
+    (!Number.isNaN(parsedParallelism) && parsedParallelism > 0);
+  const acpCommandValid =
+    !dirty.acpCommand ||
+    !(input.agentAcpCommand && input.acpCommand.trim() === "");
+  const respondToValid =
+    !dirty.respondTo ||
+    input.respondTo !== "allowlist" ||
+    input.respondToAllowlistLength > 0;
+  const customCommandValid =
+    !dirty.harness ||
+    !(
+      input.selectedRuntimeId === "custom" &&
+      !input.inheritHarness &&
+      input.agentCommand.trim() === ""
+    );
+  const credentialsValid = !dirty.spawnConfig || !input.requiredEnvKeyMissing;
+
+  return (
+    nameValid &&
+    parallelismValid &&
+    acpCommandValid &&
+    respondToValid &&
+    customCommandValid &&
+    credentialsValid
   );
 }
 

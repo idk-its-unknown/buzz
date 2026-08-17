@@ -474,6 +474,7 @@ test("editAgent_resolveAgentCommandUpdate_pinsCustomCommandNotInherit", () => {
   assert.equal(
     resolveAgentCommandUpdate({
       inheritHarness: false,
+      hasPersona: true,
       agentCommand: "/opt/bin/my-custom-agent",
       originalAgentCommand: "", // was inheriting, no command
       agentCommandOverride: null,
@@ -493,6 +494,7 @@ test("editAgent_resolveAgentCommandUpdate_pinsUnchangedPrefillOnInheritTransitio
   assert.equal(
     resolveAgentCommandUpdate({
       inheritHarness: false,
+      hasPersona: true,
       agentCommand: "goose run",
       originalAgentCommand: "goose run", // prefilled, unchanged
       agentCommandOverride: null, // was inheriting
@@ -502,12 +504,44 @@ test("editAgent_resolveAgentCommandUpdate_pinsUnchangedPrefillOnInheritTransitio
   );
 });
 
+test("editAgent_resolveAgentCommandUpdate_personaLessRestingStateIsNoOp", () => {
+  // A persona-less record (display-only fleet mirror or legacy definition-less
+  // agent) rests at inheritHarness=false, no override, prefilled non-empty
+  // command. There is no inherit→pin transition to force — treating this as a
+  // pin made the dialog harness-dirty at open (Save enabled with zero edits,
+  // spurious override written onto keyless records).
+  assert.equal(
+    resolveAgentCommandUpdate({
+      inheritHarness: false,
+      hasPersona: false,
+      agentCommand: "buzz-agent",
+      originalAgentCommand: "buzz-agent", // prefilled, unchanged
+      agentCommandOverride: null,
+    }),
+    undefined,
+    "persona-less resting state must be a no-op, not a forced pin",
+  );
+  // An actual edit on a persona-less record still pins.
+  assert.equal(
+    resolveAgentCommandUpdate({
+      inheritHarness: false,
+      hasPersona: false,
+      agentCommand: "claude",
+      originalAgentCommand: "buzz-agent",
+      agentCommandOverride: null,
+    }),
+    "claude",
+    "a real command edit on a persona-less record must still be sent",
+  );
+});
+
 test("editAgent_resolveAgentCommandUpdate_noOpWhenPinnedAndUnchanged", () => {
   // An already-pinned agent (had an override) whose command is unchanged must
   // stay a no-op so an unrelated edit does not rewrite the command.
   assert.equal(
     resolveAgentCommandUpdate({
       inheritHarness: false,
+      hasPersona: true,
       agentCommand: "claude",
       originalAgentCommand: "claude",
       agentCommandOverride: "claude", // already pinned
@@ -523,6 +557,7 @@ test("editAgent_resolveAgentCommandUpdate_inheritSentinelOnlyWhenPinToClear", ()
   assert.equal(
     resolveAgentCommandUpdate({
       inheritHarness: true,
+      hasPersona: true,
       agentCommand: "claude",
       originalAgentCommand: "claude",
       agentCommandOverride: "claude", // had a pin → clear it
@@ -533,6 +568,7 @@ test("editAgent_resolveAgentCommandUpdate_inheritSentinelOnlyWhenPinToClear", ()
   assert.equal(
     resolveAgentCommandUpdate({
       inheritHarness: true,
+      hasPersona: true,
       agentCommand: "claude",
       originalAgentCommand: "claude",
       agentCommandOverride: null, // was already inheriting → no-op

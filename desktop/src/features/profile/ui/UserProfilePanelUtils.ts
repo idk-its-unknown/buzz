@@ -177,6 +177,7 @@ export function buildPersonaDraftProfile(persona: AgentPersona): Profile {
 }
 
 export function resolvePanelProfile({
+  managedAgent,
   persona,
   profile,
 }: {
@@ -186,7 +187,17 @@ export function resolvePanelProfile({
 }): Profile | undefined {
   const baseProfile =
     profile ?? (persona ? buildPersonaDraftProfile(persona) : undefined);
-  return withProfileAvatarFallback(baseProfile, [persona?.avatarUrl]);
+  const resolved = withProfileAvatarFallback(baseProfile, [persona?.avatarUrl]);
+  // Display-only (relay-hosted) agents: the locally-set record avatar wins so
+  // an in-app avatar edit repaints the panel immediately. The wire kind:0
+  // picture (what other clients see) stays the fallback.
+  const localAvatarUrl = managedAgent?.displayOnly
+    ? managedAgent.avatarUrl?.trim()
+    : undefined;
+  if (resolved && localAvatarUrl) {
+    return { ...resolved, avatarUrl: localAvatarUrl };
+  }
+  return resolved;
 }
 
 export function resolveProfileAvatarUrl(

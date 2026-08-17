@@ -151,7 +151,13 @@ export function mergeAgentNamesIntoProfiles(
     merged[key] = {
       ...merged[key],
       displayName: merged[key]?.displayName || agent.name,
-      avatarUrl: merged[key]?.avatarUrl ?? agent.avatarUrl,
+      // Display-only (relay-hosted) agents: the locally-set record avatar wins
+      // over the wire kind:0 picture, so in-app avatar edits repaint message
+      // rows and mention entries immediately.
+      avatarUrl:
+        agent.displayOnly && agent.avatarUrl
+          ? agent.avatarUrl
+          : (merged[key]?.avatarUrl ?? agent.avatarUrl),
       nip05Handle: merged[key]?.nip05Handle ?? null,
       ownerPubkey: merged[key]?.ownerPubkey ?? currentPubkey ?? null,
       isAgent: true,

@@ -368,6 +368,56 @@ fn inbound_definition_less_agent_applies_quad() {
     );
 }
 
+/// Phantom-twin guard, persona leg: a kind:30175 coordinate whose d-tag is a
+/// display-only record's pubkey is a stale manufactured twin (pre-gate B5
+/// backfill) and must be recognized so the reconcile command drops it. The
+/// same coordinate on a spawnable local agent, or with no local match, is not
+/// a twin.
+#[test]
+fn display_only_pubkey_coordinate_is_recognized_as_phantom_twin() {
+    let mut display_only = local_agent();
+    display_only.display_only = true;
+    display_only.persona_id = None;
+    let agents = vec![display_only];
+
+    assert!(is_display_only_twin_coordinate(AGENT_PUBKEY, &agents));
+    assert!(
+        !is_display_only_twin_coordinate(AGENT_PUBKEY, &[local_agent()]),
+        "spawnable local agent's coordinate is not a twin"
+    );
+    assert!(
+        !is_display_only_twin_coordinate("unrelated-d-tag", &agents),
+        "unmatched coordinate is not a twin"
+    );
+}
+
+/// Phantom-twin guard, agent leg: a stale pre-gate kind:30177 event still
+/// carries the manufactured twin link (`persona_id`). Applying it onto a
+/// display-only record must NOT re-link the record — cleanup nulled the link
+/// and the definition row no longer exists. Non-link projected fields still
+/// merge.
+#[test]
+fn inbound_managed_agent_does_not_relink_display_only_record() {
+    let event = foreign_agent_event_with_secrets(AGENT_PUBKEY);
+    let content =
+        crate::managed_agents::agent_events::managed_agent_content_from_event(&event).unwrap();
+    assert!(content.persona_id.is_some(), "fixture must carry the stale link");
+
+    let mut display_only = local_agent();
+    display_only.display_only = true;
+    display_only.persona_id = None;
+    display_only.persona_source_version = None;
+    let mut agents = vec![display_only];
+    apply_inbound_managed_agent(&mut agents, AGENT_PUBKEY, content);
+
+    let a = &agents[0];
+    assert_eq!(
+        a.persona_id, None,
+        "stale wire persona link re-adopted onto display-only record"
+    );
+    assert_eq!(a.name, "Remote Agent", "projected fields still merge");
+}
+
 #[test]
 fn inbound_managed_agent_no_match_is_noop() {
     let event = foreign_agent_event_with_secrets("someotheragentpubkey");

@@ -152,6 +152,12 @@ export function UserProfilePopover({
     (a) => a.pubkey === pubkey,
   );
   const profile = profileQuery.data;
+  // Display-only (relay-hosted) agents: the locally-set record avatar wins,
+  // same precedence as the profile panel and message rows.
+  const popoverAvatarUrl =
+    managedAgent?.displayOnly && managedAgent.avatarUrl
+      ? managedAgent.avatarUrl
+      : (profile?.avatarUrl ?? null);
   const ownerPubkey = profile?.ownerPubkey ?? null;
   const ownerProfileQuery = useUsersBatchQuery(
     ownerPubkey ? [ownerPubkey] : [],
@@ -302,7 +308,7 @@ export function UserProfilePopover({
     <>
       <ProfileAvatarWithStatus
         avatarClassName="text-xs"
-        avatarUrl={profile?.avatarUrl ?? null}
+        avatarUrl={popoverAvatarUrl}
         className="h-10 w-10"
         iconClassName="h-5 w-5"
         label={displayName}

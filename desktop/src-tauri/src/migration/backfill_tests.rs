@@ -87,6 +87,48 @@ fn backfill_links_standalone_agent_to_manufactured_definition() {
     );
 }
 
+/// Phantom-twin guard: a display-only record mirrors an agent whose real
+/// definition lives on a remote harness — manufacturing a local definition
+/// for it creates a phantom persona card with nonsense lifecycle actions.
+/// The record must stay `persona_id: None` while a spawnable standalone in
+/// the same store still backfills (the filter is per-record).
+#[test]
+fn display_only_records_are_never_backfilled() {
+    let dir = tempfile::tempdir().unwrap();
+    let fleet_pubkey = "c".repeat(64);
+    let solo_pubkey = "d".repeat(64);
+    let mut fleet = standalone_agent_json("Fleet Agent", &fleet_pubkey, Some("remote"));
+    fleet["display_only"] = serde_json::json!(true);
+    write_agents_json(
+        dir.path(),
+        &serde_json::json!([
+            fleet,
+            standalone_agent_json("Solo", &solo_pubkey, Some("You are Solo."))
+        ]),
+    );
+
+    let backfilled = backfill_standalone_agents_in_dir(&base(dir.path())).unwrap();
+    assert_eq!(backfilled, 1, "only the spawnable standalone backfills");
+
+    let records = load_typed(dir.path());
+    assert_eq!(records.len(), 3, "two instances + one manufactured definition");
+
+    let fleet_record = records.iter().find(|r| r.pubkey == fleet_pubkey).unwrap();
+    assert!(
+        fleet_record.persona_id.is_none(),
+        "display-only record must not be linked to a phantom definition"
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.pubkey.is_empty() && r.slug.as_deref() == Some(fleet_pubkey.as_str())),
+        "no twin definition manufactured for the display-only record"
+    );
+
+    let solo_record = records.iter().find(|r| r.pubkey == solo_pubkey).unwrap();
+    assert_eq!(solo_record.persona_id.as_deref(), Some(solo_pubkey.as_str()));
+}
+
 #[test]
 fn backfilled_definition_carries_prompt_present_even_if_empty() {
     // LOAD-BEARING (B5 gates): old readers hard-fail on an absent prompt. A

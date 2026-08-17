@@ -58,8 +58,15 @@ fn backfill_standalone_agents_in_dir(base_dir: &Path) -> Result<usize, String> {
     let mut all: Vec<ManagedAgentRecord> = serde_json::from_str(&content)
         .map_err(|e| format!("failed to parse managed-agents.json: {e}"))?;
 
-    let needs_backfill =
-        |record: &ManagedAgentRecord| !record.pubkey.is_empty() && record.persona_id.is_none();
+    // Display-only records are excluded: they mirror agents whose real
+    // definition lives on a remote harness, so a manufactured local definition
+    // is a phantom twin — a persona card whose lifecycle actions (duplicate,
+    // delete, deactivate) target nothing this desktop manages. They stay
+    // `persona_id: None` by design; the Agents tab renders them from the
+    // record alone.
+    let needs_backfill = |record: &ManagedAgentRecord| {
+        !record.pubkey.is_empty() && record.persona_id.is_none() && !record.display_only
+    };
     if !all.iter().any(needs_backfill) {
         return Ok(0);
     }

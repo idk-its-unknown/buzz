@@ -8,9 +8,17 @@ export function buildUnifiedGroups(
 ) {
   const byPersonaId = new Map<string, ManagedAgent[]>();
   const ungrouped: ManagedAgent[] = [];
+  const remote: ManagedAgent[] = [];
 
   for (const agent of agents) {
-    if (!agent.personaId) {
+    if (agent.displayOnly) {
+      // Display-only records mirror agents managed on a remote harness. They
+      // are definition-less by design (the phantom-twin backfill gate keeps
+      // them that way), and any persona link a stale record still carries is
+      // a twin artifact — so they take their own group unconditionally,
+      // before persona matching.
+      remote.push(agent);
+    } else if (!agent.personaId) {
       ungrouped.push(agent);
     } else {
       const list = byPersonaId.get(agent.personaId) ?? [];
@@ -30,5 +38,5 @@ export function buildUnifiedGroups(
     if (!matched.has(id)) unknown.push(...list);
   }
 
-  return { groups, ungrouped, unknown };
+  return { groups, ungrouped, unknown, remote };
 }

@@ -407,6 +407,19 @@ export function UserProfilePanel({
     setEditAgentOpen(true);
   }, [resolvedPersona, setEditAgentOpen]);
 
+  // Instructions row deep-link: persona-backed agents edit instructions in
+  // the persona dialog; persona-less records (display-only fleet mirrors,
+  // legacy standalones) own their prompt on the record, so open the
+  // instance-edit dialog focused on the system-prompt field.
+  const handleEditAgentInstructions = React.useCallback(() => {
+    if (resolvedPersona) {
+      setPersonaDialogState(editPersonaDialogState(resolvedPersona));
+      return;
+    }
+    setEditAgentFocus({ type: "system_prompt" });
+    setEditAgentOpen(true);
+  }, [resolvedPersona, setEditAgentFocus, setEditAgentOpen]);
+
   const { deleteManagedAgentRecord, deleteManagedAgentsForPersona } =
     useProfileAgentDeletion({
       channels: channelsQuery.data,
@@ -798,6 +811,7 @@ export function UserProfilePanel({
           handleAgentPrimaryAction={handleAgentPrimaryAction}
           handleAgentRestart={handleAgentRestart}
           handleEditAgent={handleEditAgent}
+          handleEditAgentInstructions={handleEditAgentInstructions}
           handleToggleAgentAutoStart={handleToggleAgentAutoStart}
           handleEditPersona={canManagePersona ? handleEditPersona : undefined}
           handleHuddle={canHuddle ? handleHuddle : undefined}

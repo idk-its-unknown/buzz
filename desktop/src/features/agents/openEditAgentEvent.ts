@@ -20,10 +20,14 @@ const OPEN_EDIT_AGENT_EVENT = "buzz:open-edit-agent";
  *   and focus its value input.
  * - `normalized_field`: focus the provider (`agent-provider`) or model
  *   (`agent-model`) dropdown that corresponds to the missing field.
+ * - `system_prompt`: expand the Advanced section and focus the system-prompt
+ *   textarea (the profile panel's "Agent instructions" row deep-links here
+ *   for persona-less records, where the record IS the definition).
  */
 export type EditAgentFocusTarget =
   | { type: "env_key"; key: string }
-  | { type: "normalized_field"; field: string };
+  | { type: "normalized_field"; field: string }
+  | { type: "system_prompt" };
 
 type OpenEditAgentDetail = { pubkey: string; focus?: EditAgentFocusTarget };
 

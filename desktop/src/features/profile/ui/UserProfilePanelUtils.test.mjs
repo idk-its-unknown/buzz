@@ -8,6 +8,7 @@ import {
   profilePanelTabFromSearch,
   profilePanelTargetKey,
   profilePanelViewFromSearch,
+  resolvePanelProfile,
 } from "./UserProfilePanelUtils.ts";
 
 function agent(overrides = {}) {
@@ -205,4 +206,50 @@ test("profile target identity stays stable while a requested pubkey is canonical
     profilePanelTargetKey(undefined, "requested-persona"),
     "persona:requested-persona",
   );
+});
+
+function wireProfile(overrides = {}) {
+  return {
+    pubkey: "ab".repeat(32),
+    displayName: "CFO",
+    avatarUrl: "http://relay.example/media/wire.png",
+    about: null,
+    nip05Handle: null,
+    ownerPubkey: null,
+    hasProfileEvent: true,
+    ...overrides,
+  };
+}
+
+test("resolvePanelProfile: display-only agent's local avatar wins over wire kind:0", () => {
+  const resolved = resolvePanelProfile({
+    managedAgent: agent({
+      displayOnly: true,
+      avatarUrl: "http://relay.example/media/local.png",
+    }),
+    persona: undefined,
+    profile: wireProfile(),
+  });
+  assert.equal(resolved?.avatarUrl, "http://relay.example/media/local.png");
+});
+
+test("resolvePanelProfile: display-only agent without a local avatar keeps the wire avatar", () => {
+  const resolved = resolvePanelProfile({
+    managedAgent: agent({ displayOnly: true, avatarUrl: null }),
+    persona: undefined,
+    profile: wireProfile(),
+  });
+  assert.equal(resolved?.avatarUrl, "http://relay.example/media/wire.png");
+});
+
+test("resolvePanelProfile: non-display-only agent's record avatar does NOT override the wire", () => {
+  const resolved = resolvePanelProfile({
+    managedAgent: agent({
+      displayOnly: false,
+      avatarUrl: "http://relay.example/media/local.png",
+    }),
+    persona: undefined,
+    profile: wireProfile(),
+  });
+  assert.equal(resolved?.avatarUrl, "http://relay.example/media/wire.png");
 });

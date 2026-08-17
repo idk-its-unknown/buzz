@@ -187,6 +187,7 @@ test("rehost_submit_persistsToggleAsCommandClear_andOmitsHarnessOverride", () =>
   // agentCommandUpdate (omitted while inheriting — falsy per the component).
   const agentCommandUpdate = resolveAgentCommandUpdate({
     inheritHarness: true,
+    hasPersona: true,
     agentCommand: pinnedAgent.agentCommand,
     originalAgentCommand: pinnedAgent.agentCommand,
     agentCommandOverride: pinnedAgent.agentCommandOverride,

@@ -158,6 +158,16 @@ fn reconcile_inbound_persona_event_blocking(
 
     match kind {
         KIND_PERSONA => {
+            // Phantom-twin guard: before the display-only gate existed, the B5
+            // backfill manufactured a definition (slug = agent pubkey) for
+            // every display-only record and published it. Those coordinates
+            // may still be live on the relay, so an inbound persona whose
+            // d-tag is a display-only record's pubkey is a stale twin echo —
+            // dropping it here is what keeps the local cleanup permanent.
+            let agents = load_managed_agents(&app)?;
+            if is_display_only_twin_coordinate(&d_tag, &agents) {
+                return Ok(());
+            }
             let mut personas = load_personas(&app)?;
             // `inbound_persona` is `Some` for KIND_PERSONA (set above).
             apply_inbound_persona(
@@ -357,6 +367,17 @@ fn event_d_tag(event: &nostr::Event) -> Result<String, String> {
         .ok_or_else(|| "inbound event missing d-tag".to_string())
 }
 
+/// True when an inbound kind:30175 coordinate is a phantom twin of a
+/// display-only agent record: its d-tag equals the pubkey of a local record
+/// with `display_only: true`. Such definitions were manufactured by the
+/// pre-gate B5 backfill and must never re-enter the local store — see the
+/// guard in `reconcile_inbound_persona_event_blocking`.
+fn is_display_only_twin_coordinate(d_tag: &str, agents: &[ManagedAgentRecord]) -> bool {
+    agents
+        .iter()
+        .any(|record| record.display_only && record.pubkey == d_tag)
+}
+
 /// Merge a parsed inbound persona into the local set: patch the matching record
 /// in place, or push it when none matches.
 ///
@@ -418,7 +439,16 @@ fn apply_inbound_managed_agent(
         // "not carried", never "clear". Definition-less events still carry
         // the quad and apply it unconditionally (including clears).
         let definition_linked = inbound.persona_id.is_some();
-        local.persona_id = inbound.persona_id;
+        if local.display_only {
+            // Phantom-twin guard: display-only records are definition-less by
+            // design. A stale pre-gate event may still carry the manufactured
+            // twin link (persona_id = own pubkey) — adopting it would re-link
+            // the record to a definition the cleanup removed. Keep the local
+            // (None) link; the quad below is already skipped for linked
+            // events, and a definition-less echo applies the same values.
+        } else {
+            local.persona_id = inbound.persona_id;
+        }
         if !definition_linked {
             local.system_prompt = inbound.system_prompt;
             local.model = inbound.model;

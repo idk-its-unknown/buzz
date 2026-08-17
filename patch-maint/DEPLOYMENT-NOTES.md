@@ -68,3 +68,88 @@ beyond a copied template: `pubkey`, `name`/`display_name`, `relay_url`,
 In-channel avatars are independent of the desktop: publish a `kind:0` profile
 with a `picture` URL (the relay's Blossom media store works — `PUT /upload`
 with a kind:24242 auth event signed by the agent's own key).
+
+### Promoting a locally-set avatar to the agent's wire profile
+
+The desktop's avatar editor for display-only agents changes only THIS device's
+registry (by design — the desktop holds no agent keys). The upload it performs
+does land in the relay's media store, though, so the image URL it saves is
+already fleet-reachable. To make it the avatar every client sees, publish it
+into the agent's `kind:0` from the agent's host, signed by the agent's own key:
+
+```bash
+BUZZ_PRIVATE_KEY_FILE=/home/<agent-user>/.buzz.key \
+  buzz users set-profile --avatar "<the media URL>"
+```
+
+`set-profile` is read-merge-write (verified in `commands/users.rs`): a lone
+`--avatar` update preserves the existing display name, about, and NIP-05.
+
+Zero-shell variant: the agent can run that command on itself — it has the CLI
+and its keyfile in its tool sandbox, the same machinery it publishes messages
+with. Mention the agent and ask it to update its avatar to the URL.
+
+Related desktop setting: enable "Agent-managed profiles" (Settings →
+Experiments) so the desktop's profile reconciliation does not restore its
+local copy over what the agent publishes.
+
+### Instructions for display-only agents (read = kind:0 about, write = mention)
+
+A display-only record's `system_prompt` never reaches the remote harness —
+the agent's real instructions live in its own config on its host (its
+SOUL.md / workspace instructions file). The honest loop mirrors the avatar
+pattern; the agent is the only writer of its own brain:
+
+- **Read**: each agent publishes its instructions file into its kind:0
+  profile `about` (`buzz users set-profile --about "$(head -c 8000
+  <instructions-file>)"`, signed with the agent's own key — read-merge-write,
+  so name/picture survive). The desktop shows this as "Current instructions
+  (published by the agent)" in the instance-edit dialog and as the profile
+  bio.
+- **Write**: the dialog's "Request an instructions change" box is a draft.
+  "Copy change request" produces a paste-ready message; mention the agent in
+  its channel and paste. Install a standing protocol section in each agent's
+  instructions file telling it to apply such requests to the file and then
+  republish its `about` — after which every client shows the new brain.
+
+Both halves are automated by a fleet-side script (in this deployment:
+`30-publish-brains.sh`) that appends the protocol section (marker-guarded,
+idempotent) and performs the initial publish for every agent.
+
+### Phantom persona twins (fixed; one-time cleanup for stores that predate it)
+
+Before the gate in `migration/backfill.rs`, every keyed record with no
+persona link — display-only records included — got a key-less definition
+manufactured at boot (slug = the agent's pubkey) and was linked to it. For
+display-only records that definition is a **phantom twin**: a persona card
+whose lifecycle actions (duplicate / delete / deactivate) target nothing the
+desktop manages. The twins were also published as kind:30175 events under the
+desktop owner's key, so deleting them locally was not enough — the relay
+would re-deliver them.
+
+The fix is three gates that land together:
+
+- the boot backfill skips `display_only` records entirely;
+- the inbound kind:30175 reconcile drops any event whose d-tag is a local
+  display-only record's pubkey (a stale twin echo from the relay);
+- the inbound kind:30177 merge never re-applies a `persona_id` onto a
+  display-only record (stale pre-gate events still carry the twin link).
+
+Display-only records now render in their own "Remote agents" group in the
+Agents tab, with an Edit action that opens the full instance-edit dialog.
+
+Stores written by pre-gate builds still hold the twin rows. Run
+`cleanup-phantom-twins.py` (this directory) ONCE, with the app closed and the
+patched build already deployed: it backs up `managed-agents.json`, drops the
+twin definitions, nulls the display-only records' `persona_id`, and deletes
+the twins' retained kind:30175 rows from every scoped retention database —
+a retained row left `pending_sync=1` would otherwise be republished to the
+relay by the flush loop on next launch. It is idempotent and verifies its
+own writes.
+
+Stale twin events already on the relay cannot re-enter the local persona
+store (the inbound gate drops them), but a re-delivered echo does leave one
+inert retained row per coordinate in the retention database (sync-head
+bookkeeping, `pending_sync=0` — never republished, nothing rendered). For a
+fully clean relay, delete the kind:30175 events whose d-tag is a fleet agent
+pubkey from the relay's database.

@@ -212,6 +212,7 @@ export function ProfileInfoTabContent({
   onExportAgent,
   onOpenActivity,
   onEditAgent,
+  onEditAgentInstructions,
   pubkey,
   showActivityIngress,
   showInstructionBlock,
@@ -232,6 +233,8 @@ export function ProfileInfoTabContent({
   onDuplicateAgent?: () => void;
   onExportAgent?: () => void;
   onEditAgent: () => void;
+  /** Deep-link variant of onEditAgent that lands on the instructions field. */
+  onEditAgentInstructions?: () => void;
   onOpenActivity: (channelId?: string | null) => void;
   pubkey: string | null;
   showActivityIngress: boolean;
@@ -297,7 +300,7 @@ export function ProfileInfoTabContent({
               grouped
               icon={MessageSquare}
               label="Agent instructions"
-              onClick={onEditAgent}
+              onClick={onEditAgentInstructions ?? onEditAgent}
               testId="user-profile-agent-instruction-row"
             />
           ) : null}
