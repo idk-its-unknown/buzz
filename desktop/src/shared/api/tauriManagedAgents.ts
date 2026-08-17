@@ -50,6 +50,25 @@ export async function setManagedAgentAutoRestart(
   return fromRawManagedAgent(response);
 }
 
+/**
+ * Avatar-only partial update — the edit path for display-only (relay-hosted)
+ * agents, whose full configuration is not editable from this device. Pass
+ * null to clear the avatar.
+ */
+export async function setManagedAgentAvatar(
+  pubkey: string,
+  avatarUrl: string | null,
+): Promise<ManagedAgent> {
+  const response = await invokeTauri<RawManagedAgent>(
+    "set_managed_agent_avatar",
+    {
+      pubkey,
+      avatarUrl,
+    },
+  );
+  return fromRawManagedAgent(response);
+}
+
 export async function listManagedAgentRuntimes(): Promise<
   ManagedAgentRuntimeStatus[]
 > {

@@ -1,7 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveManagedAgentAvatarUrl } from "./managedAgentAvatar.ts";
+import {
+  normalizeAvatarUrlInput,
+  resolveManagedAgentAvatarUrl,
+} from "./managedAgentAvatar.ts";
+
+test("normalizeAvatarUrlInput: empty commit (the clear signal) becomes null", () => {
+  assert.equal(normalizeAvatarUrlInput(""), null);
+});
+
+test("normalizeAvatarUrlInput: whitespace-only becomes null", () => {
+  assert.equal(normalizeAvatarUrlInput("   "), null);
+});
+
+test("normalizeAvatarUrlInput: null and undefined pass through as null", () => {
+  assert.equal(normalizeAvatarUrlInput(null), null);
+  assert.equal(normalizeAvatarUrlInput(undefined), null);
+});
+
+test("normalizeAvatarUrlInput: URLs are kept, surrounding whitespace trimmed", () => {
+  assert.equal(
+    normalizeAvatarUrlInput("  https://relay.example/media/abc.png "),
+    "https://relay.example/media/abc.png",
+  );
+});
+
+test("normalizeAvatarUrlInput: emoji SVG data URLs pass through unchanged", () => {
+  const emoji = "data:image/svg+xml,%3Csvg%3E%3C/svg%3E";
+  assert.equal(normalizeAvatarUrlInput(emoji), emoji);
+});
 
 test("resolveManagedAgentAvatarUrl uploads data image URIs", async () => {
   const uploaded = await resolveManagedAgentAvatarUrl(

@@ -45,6 +45,7 @@ import {
 import type { HarnessDefinitionInput } from "@/shared/api/tauri";
 import {
   setManagedAgentAutoRestart,
+  setManagedAgentAvatar,
   setManagedAgentStartOnAppLaunch,
   startManagedAgent,
   stopManagedAgent,
@@ -593,6 +594,23 @@ export function useSetManagedAgentAutoRestartMutation() {
       pubkey: string;
       autoRestartOnConfigChange: boolean;
     }) => setManagedAgentAutoRestart(pubkey, autoRestartOnConfigChange),
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
+    },
+  });
+}
+
+export function useSetManagedAgentAvatarMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      pubkey,
+      avatarUrl,
+    }: {
+      pubkey: string;
+      avatarUrl: string | null;
+    }) => setManagedAgentAvatar(pubkey, avatarUrl),
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: managedAgentsQueryKey });
     },

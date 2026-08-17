@@ -42,6 +42,20 @@ export async function resolveManagedAgentAvatarUrl(
   }
 }
 
+/**
+ * Normalize a raw avatar commit value into the stored `avatar_url` shape:
+ * whitespace-only and empty commits (AgentCreationPreview signals "clear" by
+ * committing "") become null; anything else passes through untrimmed-in-body
+ * but with surrounding whitespace removed. Shared by the display-only
+ * avatar editor and the e2e bridge mock so both agree with the Rust command.
+ */
+export function normalizeAvatarUrlInput(
+  raw: string | null | undefined,
+): string | null {
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : null;
+}
+
 async function defaultUploadMediaBytes(data: number[], filename?: string) {
   const { uploadMediaBytes } = await import("@/shared/api/tauri");
   return uploadMediaBytes(data, filename);

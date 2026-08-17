@@ -8803,6 +8803,16 @@ async function handleSetManagedAgentAutoRestart(args: {
   return cloneManagedAgent(agent);
 }
 
+async function handleSetManagedAgentAvatar(args: {
+  pubkey: string;
+  avatarUrl: string | null;
+}): Promise<RawManagedAgent> {
+  const agent = getMockManagedAgent(args.pubkey);
+  agent.avatar_url = args.avatarUrl?.trim() ? args.avatarUrl : null;
+  agent.updated_at = new Date().toISOString();
+  return cloneManagedAgent(agent);
+}
+
 async function handleGetManagedAgentLog(args: {
   pubkey: string;
   lineCount?: number;
@@ -12592,6 +12602,10 @@ export function maybeInstallE2eTauriMocks() {
       case "set_managed_agent_auto_restart":
         return handleSetManagedAgentAutoRestart(
           payload as Parameters<typeof handleSetManagedAgentAutoRestart>[0],
+        );
+      case "set_managed_agent_avatar":
+        return handleSetManagedAgentAvatar(
+          payload as Parameters<typeof handleSetManagedAgentAvatar>[0],
         );
       case "set_managed_agent_start_on_app_launch":
         return handleSetManagedAgentStartOnAppLaunch(

@@ -15,6 +15,7 @@ import type { BackendIntent } from "../lib/instanceInputForDefinition";
 import type { AgentCreateIntent } from "./agentCreateIntent";
 import type { EditAgentFocusTarget } from "@/features/agents/openEditAgentEvent";
 import { AgentInstanceEditDialog } from "./AgentInstanceEditDialog";
+import { DisplayOnlyAvatarDialog } from "./DisplayOnlyAvatarDialog";
 import { createPersonaDialogState } from "./personaDialogState";
 import {
   AgentDefinitionDialog,
@@ -96,6 +97,20 @@ type AgentDialogProps =
  */
 export function AgentDialog(props: AgentDialogProps) {
   if (props.mode === "instance-edit") {
+    // Display-only (relay-hosted) agents have no locally-editable
+    // configuration — the full instance-edit form would demand harness/model
+    // fields the record deliberately stubs. Route them to the avatar-only
+    // editor instead; the avatar is the one field this device owns.
+    if (props.agent.displayOnly) {
+      return (
+        <DisplayOnlyAvatarDialog
+          agent={props.agent}
+          onOpenChange={props.onOpenChange}
+          onUpdated={props.onUpdated}
+          open={props.open}
+        />
+      );
+    }
     return (
       // A running instance knows its own backend, so the respond-to warning can
       // name the machine it will actually run on.
