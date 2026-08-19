@@ -129,7 +129,8 @@ async fn start_pairing_session(
 
     let ws_url = relay_ws_url_with_override(&state);
     let http_url = relay_api_base_url_with_override(&state);
-    let pairing_relay_url = resolve_pairing_relay_url(&ws_url, probe_pairing_relay(&ws_url).await)?;
+    let pairing_relay_url =
+        discover_pairing_relay_url(pairing_relay_override_from_env(), &ws_url).await?;
     let (session, qr_payload) = PairingSession::new_source(pairing_relay_url.clone());
     let mut qr_uri = encode_qr(&qr_payload);
     if mode == PairingMode::RecoverIdentity {
@@ -669,6 +670,80 @@ enum PairingRelay {
     Configured(String),
     LegacyPath,
     MainRelay,
+}
+
+/// Environment override for the pairing relay URL.
+///
+/// Compose deployments ship no `/pair` sidecar and older relays predate the
+/// NIP-11 `pairing_relay_url` field, so a relay that advertises NIP-43
+/// misroutes pairing to a non-existent `/pair` (404) — and the main-relay
+/// fallback is unusable when membership is enforced at NIP-42 AUTH, because
+/// pairing signs with ephemeral throwaway keys. Setting this to a `ws://` or
+/// `wss://` URL points pairing straight at a self-hosted `buzz-pair-relay`
+/// without touching the relay stack. The chosen URL also rides the QR
+/// payload, so mobile follows automatically.
+///
+/// The name deliberately matches the relay server's `BUZZ_PAIRING_RELAY_URL`
+/// (which makes the relay advertise `pairing_relay_url` in NIP-11): same
+/// concept, same value shape, whichever side of the deployment you can
+/// configure. A machine that runs both and sets it globally gets consistent
+/// behavior from either reader.
+const PAIRING_RELAY_URL_ENV: &str = "BUZZ_PAIRING_RELAY_URL";
+
+/// Read the pairing-relay override from the environment. Extracted so the
+/// env-var name wiring stays pinned by a test.
+///
+/// Non-Unicode values are lossily decoded rather than dropped: `var()` would
+/// conflate them with "unset", silently falling back to discovery — but a
+/// SET override must either be honored or fail loudly, and the lossy string
+/// flows into `validated_pairing_override` which decides exactly that.
+fn pairing_relay_override_from_env() -> Option<String> {
+    std::env::var_os(PAIRING_RELAY_URL_ENV).map(|value| match value.into_string() {
+        Ok(s) => s,
+        Err(os) => os.to_string_lossy().into_owned(),
+    })
+}
+
+/// Validate a raw pairing-relay override.
+///
+/// - Unset or blank → `Ok(None)`: pairing falls back to NIP-11 discovery.
+/// - Set but not a `ws`/`wss` URL with a host → `Err`: the operator asked for
+///   an override and did not get it, so fail loudly instead of silently
+///   routing pairing somewhere they did not choose.
+/// - Valid → `Ok(Some(normalized))`. The WHATWG serialization is returned
+///   (not the raw input) so every consumer — the WebSocket dial and the QR
+///   payload — sees exactly what was validated: `url::Url` tolerates
+///   characters (interior newlines, tabs) that `http::Uri` later rejects.
+fn validated_pairing_override(raw: Option<String>) -> Result<Option<String>, String> {
+    let Some(value) = raw else { return Ok(None) };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let url = url::Url::parse(value)
+        .map_err(|e| format!("{PAIRING_RELAY_URL_ENV} is set but not a valid URL: {e}"))?;
+    if !matches!(url.scheme(), "ws" | "wss") || url.host_str().is_none() {
+        return Err(format!(
+            "{PAIRING_RELAY_URL_ENV} is set but must be a ws:// or wss:// URL with a host"
+        ));
+    }
+    Ok(Some(url.to_string()))
+}
+
+/// Resolve the pairing relay URL: a valid override wins without probing the
+/// main relay; a set-but-invalid override is a hard error; otherwise fall
+/// back to NIP-11 discovery unchanged.
+async fn discover_pairing_relay_url(
+    override_raw: Option<String>,
+    main_relay_ws_url: &str,
+) -> Result<String, String> {
+    if let Some(url) = validated_pairing_override(override_raw)? {
+        return Ok(url);
+    }
+    resolve_pairing_relay_url(
+        main_relay_ws_url,
+        probe_pairing_relay(main_relay_ws_url).await,
+    )
 }
 
 /// Prefer the relay-advertised dedicated pairing URL. The legacy `/pair`

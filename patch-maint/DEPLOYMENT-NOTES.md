@@ -153,3 +153,41 @@ inert retained row per coordinate in the retention database (sync-head
 bookkeeping, `pending_sync=0` — never republished, nothing rendered). For a
 fully clean relay, delete the kind:30175 events whose d-tag is a fleet agent
 pubkey from the relay's database.
+
+## Mobile pairing on a compose-deployed membership relay
+
+A relay deployed from `deploy/compose` advertises NIP-43, so the desktop's
+pairing discovery resolves the legacy `<relay>/pair` path — which nothing
+serves (the `buzz-pair-relay` sidecar is wired up only in the helm chart).
+Pairing dies with `WebSocket connection failed: HTTP error: 404`, and the
+`MainRelay` fallback cannot work on a membership relay: pairing signs with
+ephemeral throwaway keys, and NIP-42 AUTH rejects them
+(`restricted: not a relay member`) before they can subscribe. Upstream
+tracking: block/buzz#2734 (compose bundle fix: PR #2736).
+
+Deployment shape used here:
+
+- `buzz-pair-relay` built from this branch (it also ships inside the relay
+  image at `/usr/local/bin/buzz-pair-relay`), run as a hardened systemd unit
+  on the relay host, bound to a public port. The crate now arms hyper's 30s
+  header-read timeout in-binary (this branch), so a proxyless bind is not
+  left with unbounded pre-upgrade sockets; a per-IP new-connection rate
+  limit (`ufw limit`) fronts the port. Note the rate limit budget (~6 new
+  connections per 30s per IP) is shared by the desktop and a phone on the
+  same NAT — enough for normal pairing (2 connections per attempt), but
+  rapid-fire retries can trip it; if pairing suddenly gets connection
+  refusals after several attempts, wait 30s.
+- The relay's own `BUZZ_PAIRING_RELAY_URL` env var (compose `.env`) makes
+  NIP-11 advertise `pairing_relay_url`, so stock desktops discover the
+  sidecar with no client configuration.
+- Belt-and-braces (this branch): the desktop honors a client-side
+  `BUZZ_PAIRING_RELAY_URL` env override consulted before the NIP-11 probe —
+  useful when the relay's config is out of reach. Set-but-invalid values
+  fail pairing loudly rather than silently falling back. The desktop reads
+  it at pairing time from its process environment, so a change takes effect
+  only after the app is relaunched.
+
+Mobile caveat: release builds of the mobile app require an `https://` relay
+URL at credential import (`_validateRelayUrl`), so a plain-HTTP relay
+completes SAS and then fails with "Failed to import credentials". Debug
+builds accept `http://`. Upstream: block/buzz#4198.

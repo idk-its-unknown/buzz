@@ -6,14 +6,16 @@
 //!
 //! # Deployment
 //!
-//! This binary binds **loopback only** and MUST run behind a reverse proxy
-//! (nginx, caddy, etc.) that:
+//! This binary defaults to binding **loopback only** and is designed to run
+//! behind a reverse proxy (nginx, caddy, etc.) that:
 //! - Routes only `/pair` to this sidecar
-//! - Enforces HTTP read timeouts (mitigates slowloris at the TCP layer)
 //! - Terminates TLS
 //!
 //! The relay does not enforce path restrictions or pre-upgrade connection
-//! limits — those are the reverse proxy's responsibility.
+//! limits — those are the reverse proxy's responsibility. A 30s header-read
+//! timeout is enforced in-binary so a deployment without a proxy is not left
+//! with unbounded pre-upgrade sockets, but a proxy remains the recommended
+//! place for TLS and connection policy.
 //!
 //! # Security Model
 //!
@@ -41,7 +43,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
 use hyper::{Method, Request, Response, StatusCode, Version};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use parking_lot::Mutex;
 use secp256k1::schnorr::Signature as SchnorrSig;
 use secp256k1::XOnlyPublicKey;
@@ -994,9 +996,28 @@ async fn http_service(
     Ok(resp)
 }
 
+/// Pre-upgrade header-read timeout for [`run_server`].
+///
+/// hyper's header_read_timeout only arms when a timer is installed; without
+/// one, a deployment with no reverse proxy has NO pre-upgrade read timeout,
+/// so trickled or never-sent headers hold sockets open forever (they are
+/// invisible to MAX_CONNS, which counts only upgraded connections).
+pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Run the relay accept loop on the given listener.
 /// Public for integration tests that bind to `:0`.
 pub async fn run_server(listener: TcpListener, relay: Arc<Relay>) {
+    run_server_with_header_timeout(listener, relay, Some(HEADER_READ_TIMEOUT)).await
+}
+
+/// Like [`run_server`] but with a configurable pre-upgrade header timeout.
+/// `None` disables it — for virtual-time tests, where an armed real-time
+/// timer would let paused-clock auto-advance fire it mid-handshake.
+pub async fn run_server_with_header_timeout(
+    listener: TcpListener,
+    relay: Arc<Relay>,
+    header_timeout: Option<Duration>,
+) {
     let addr = listener.local_addr().ok();
     if let Some(a) = addr {
         eprintln!("buzz-pair-relay listening on {a}");
@@ -1006,6 +1027,16 @@ pub async fn run_server(listener: TcpListener, relay: Arc<Relay>) {
             Ok(pair) => pair,
             Err(e) => {
                 eprintln!("accept error: {e}");
+                // Back off ONLY on FD exhaustion (ENFILE/EMFILE/WSAEMFILE) so
+                // accept cannot spin hot while the process is out of
+                // descriptors. Transient per-connection errors (e.g. a queued
+                // connection RST before accept dequeues it) must not stall the
+                // loop — a remote peer can induce those at will, and a sleep
+                // here would be a cheap accept-throughput DoS lever.
+                let fd_exhaustion = matches!(e.raw_os_error(), Some(23) | Some(24) | Some(10024));
+                if fd_exhaustion {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
                 continue;
             }
         };
@@ -1013,11 +1044,13 @@ pub async fn run_server(listener: TcpListener, relay: Arc<Relay>) {
         tokio::spawn(async move {
             let io = TokioIo::new(tcp);
             let svc = service_fn(move |req| http_service(Arc::clone(&relay), req));
-            if let Err(e) = http1::Builder::new()
-                .serve_connection(io, svc)
-                .with_upgrades()
-                .await
-            {
+            let mut builder = http1::Builder::new();
+            if let Some(timeout) = header_timeout {
+                // See HEADER_READ_TIMEOUT: the timer install is what makes
+                // the timeout real.
+                builder.timer(TokioTimer::new()).header_read_timeout(timeout);
+            }
+            if let Err(e) = builder.serve_connection(io, svc).with_upgrades().await {
                 eprintln!("http error: {e}");
             }
         });

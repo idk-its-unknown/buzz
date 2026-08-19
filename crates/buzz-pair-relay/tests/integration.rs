@@ -39,6 +39,19 @@ async fn start_relay() -> String {
     format!("ws://127.0.0.1:{}", addr.port())
 }
 
+/// Start a relay with the pre-upgrade header timeout disabled. Virtual-time
+/// tests need this: with `start_paused`, auto-advance can jump straight to an
+/// armed real-time header timer mid-handshake and kill the connection.
+async fn start_relay_without_header_timeout() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let relay = Arc::new(Relay::new());
+    tokio::spawn(buzz_pair_relay::run_server_with_header_timeout(
+        listener, relay, None,
+    ));
+    format!("ws://127.0.0.1:{}", addr.port())
+}
+
 /// Connect a WebSocket client to the relay.
 async fn connect(url: &str) -> WS {
     let (ws, _) = connect_async(url).await.unwrap();
@@ -441,7 +454,7 @@ async fn test_second_sub_same_id() {
 /// 9. Connection closes after 120 s (virtual time).
 #[tokio::test(start_paused = true)]
 async fn test_120s_timeout() {
-    let url = start_relay().await;
+    let url = start_relay_without_header_timeout().await;
     let mut ws = connect(&url).await;
 
     // Advance virtual time past the connection timeout.
@@ -450,6 +463,39 @@ async fn test_120s_timeout() {
     tokio::task::yield_now().await;
 
     assert_closed(&mut ws).await;
+}
+
+/// 9b. The pre-upgrade header-read timeout genuinely arms (real time).
+///
+/// Regression tripwire: hyper silently DROPS its header_read_timeout when no
+/// timer is installed on the connection builder, so a refactor that loses the
+/// `.timer(...)` call would leave proxyless deployments with unbounded
+/// pre-upgrade sockets while every other test still passes. A raw TCP
+/// connection that never sends headers must be closed by the server.
+#[tokio::test]
+async fn test_header_read_timeout_closes_idle_preupgrade_connection() {
+    use tokio::io::AsyncReadExt;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let relay = Arc::new(Relay::new());
+    tokio::spawn(buzz_pair_relay::run_server_with_header_timeout(
+        listener,
+        relay,
+        Some(Duration::from_millis(300)),
+    ));
+
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    // Send nothing. The server must close the socket once the header timeout
+    // fires: read returns 0 (EOF) or a reset error, well within the guard.
+    let mut buf = [0u8; 16];
+    let read = tokio::time::timeout(Duration::from_secs(10), tcp.read(&mut buf)).await;
+    match read {
+        Ok(Ok(0)) => {}     // clean close
+        Ok(Ok(n)) => panic!("server sent {n} unexpected bytes instead of closing"),
+        Ok(Err(_)) => {}    // reset — also a close
+        Err(_) => panic!("header-read timeout never fired: idle pre-upgrade socket stayed open"),
+    }
 }
 
 /// 10. Backpressure unit test: bounded mpsc channel rejects when full.
@@ -1180,7 +1226,7 @@ async fn test_reader_backpressure_closes() {
 ///     Explicit duplicate of test 9 with a slightly different assertion style.
 #[tokio::test(start_paused = true)]
 async fn test_cancellation_immediate() {
-    let url = start_relay().await;
+    let url = start_relay_without_header_timeout().await;
     let mut ws = connect(&url).await;
 
     tokio::time::advance(Duration::from_secs(121)).await;
