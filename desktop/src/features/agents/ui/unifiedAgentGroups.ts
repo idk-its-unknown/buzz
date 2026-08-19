@@ -28,8 +28,15 @@ export function buildUnifiedGroups(
       // are definition-less by design (the phantom-twin backfill gate keeps
       // them that way), and any persona link a stale record still carries is
       // a twin artifact — so they take their own group unconditionally,
-      // before persona matching. Archive-aware like every other group.
-      if (!isArchived(agent.pubkey)) remote.push(agent);
+      // before persona matching.
+      //
+      // NOT archive-filtered (unlike the local buckets below): a remote agent's
+      // presence on the hub reflects the fleet on the remote harness, not local
+      // archive state. Upstream's archive-awareness applies to locally-owned
+      // agents; a fleet mirror hidden by a local archive would vanish with no
+      // persona-group fallback to keep it reachable. This preserves the fork's
+      // pre-merge behavior.
+      remote.push(agent);
     } else if (!agent.personaId) {
       if (!isArchived(agent.pubkey)) ungrouped.push(agent);
     } else {

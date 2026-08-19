@@ -253,7 +253,7 @@ fn reconcile_inbound_persona_event_blocking(
             // dropping it here is what keeps the local cleanup permanent.
             let agents = load_managed_agents(&app)?;
             if is_display_only_twin_coordinate(&d_tag, &agents) {
-                return Ok(());
+                return Ok(None);
             }
             let mut personas = load_personas(&app)?;
             // `inbound_persona` is `Some` for KIND_PERSONA (set above).

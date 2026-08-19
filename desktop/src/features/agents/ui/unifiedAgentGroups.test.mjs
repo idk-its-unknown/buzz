@@ -71,7 +71,10 @@ test("a stale persona link on a display-only record is a twin artifact — remot
   assert.deepEqual(groups[0].agents, [], "but it must not claim the display-only agent");
 });
 
-test("archived display-only agents are omitted from the remote group while live peers remain", () => {
+test("display-only agents are NOT archive-filtered — a fleet mirror stays visible regardless of local archive state", () => {
+  // Remote mirrors reflect the fleet on the remote harness, not local archive
+  // state, and have no persona-group fallback to keep them reachable — so the
+  // remote group deliberately ignores isArchived (unlike the local buckets).
   const archived = agent({ pubkey: "a".repeat(64), displayOnly: true });
   const live = agent({ pubkey: "b".repeat(64), displayOnly: true });
   const isArchived = (pubkey) => pubkey === archived.pubkey;
@@ -79,8 +82,8 @@ test("archived display-only agents are omitted from the remote group while live 
   const { remote } = buildUnifiedGroups([], [archived, live], isArchived);
 
   assert.deepEqual(
-    remote.map((agent) => agent.pubkey),
-    [live.pubkey],
+    remote.map((agent) => agent.pubkey).sort(),
+    [archived.pubkey, live.pubkey].sort(),
   );
 });
 
