@@ -3,18 +3,21 @@ import test from "node:test";
 
 import { buildUnifiedGroups } from "./unifiedAgentGroups.ts";
 
+const NONE_ARCHIVED = () => false;
+
 function agent(overrides = {}) {
   return {
     name: "Agent",
     pubkey: "a".repeat(64),
     personaId: null,
     displayOnly: false,
+    status: "stopped",
     ...overrides,
   };
 }
 
-function persona(id, displayName = "Persona") {
-  return { id, displayName };
+function persona(overrides = {}) {
+  return { id: "persona-1", displayName: "Persona", ...overrides };
 }
 
 test("display-only agents take the remote group, never persona groups or the custom bucket", () => {
@@ -31,8 +34,9 @@ test("display-only agents take the remote group, never persona groups or the cus
   const localCustom = agent({ name: "Solo", pubkey: "d".repeat(64) });
 
   const { groups, ungrouped, unknown, remote } = buildUnifiedGroups(
-    [persona("persona-1")],
+    [persona()],
     [remoteAgent, localLinked, localCustom],
+    NONE_ARCHIVED,
   );
 
   assert.deepEqual(remote, [remoteAgent]);
@@ -55,8 +59,9 @@ test("a stale persona link on a display-only record is a twin artifact — remot
   });
 
   const { groups, ungrouped, unknown, remote } = buildUnifiedGroups(
-    [persona(pubkey, "Phantom Twin")],
+    [persona({ id: pubkey, displayName: "Phantom Twin" })],
     [staleLinked],
+    NONE_ARCHIVED,
   );
 
   assert.deepEqual(remote, [staleLinked]);
@@ -64,4 +69,74 @@ test("a stale persona link on a display-only record is a twin artifact — remot
   assert.deepEqual(unknown, []);
   assert.equal(groups.length, 1, "the twin definition still renders until cleanup removes it");
   assert.deepEqual(groups[0].agents, [], "but it must not claim the display-only agent");
+});
+
+test("archived display-only agents are omitted from the remote group while live peers remain", () => {
+  const archived = agent({ pubkey: "a".repeat(64), displayOnly: true });
+  const live = agent({ pubkey: "b".repeat(64), displayOnly: true });
+  const isArchived = (pubkey) => pubkey === archived.pubkey;
+
+  const { remote } = buildUnifiedGroups([], [archived, live], isArchived);
+
+  assert.deepEqual(
+    remote.map((agent) => agent.pubkey),
+    [live.pubkey],
+  );
+});
+
+test("archived standalone custom agents are omitted while live peers remain", () => {
+  const archived = agent({ pubkey: "a".repeat(64), personaId: null });
+  const live = agent({ pubkey: "b".repeat(64), personaId: null });
+  const isArchived = (pubkey) => pubkey === archived.pubkey;
+
+  const { ungrouped } = buildUnifiedGroups([], [archived, live], isArchived);
+
+  assert.deepEqual(
+    ungrouped.map((agent) => agent.pubkey),
+    [live.pubkey],
+  );
+});
+
+test("archived unknown-persona agents are omitted while live peers remain", () => {
+  const archived = agent({ pubkey: "a".repeat(64), personaId: "orphan" });
+  const live = agent({ pubkey: "b".repeat(64), personaId: "orphan" });
+  const isArchived = (pubkey) => pubkey === archived.pubkey;
+
+  // No persona matches "orphan", so both land in the unknown bucket.
+  const { unknown } = buildUnifiedGroups([], [archived, live], isArchived);
+
+  assert.deepEqual(
+    unknown.map((agent) => agent.pubkey),
+    [live.pubkey],
+  );
+});
+
+test("matched persona groups keep their full instance list including archived", () => {
+  const archived = agent({ pubkey: "a".repeat(64), personaId: "persona-1" });
+  const live = agent({ pubkey: "b".repeat(64), personaId: "persona-1" });
+  const isArchived = (pubkey) => pubkey === archived.pubkey;
+
+  // The card resolves its own target via pickProfileAgent; the group keeps the
+  // archived record so an all-archived persona still forms a card in
+  // persona-only mode rather than vanishing from the library.
+  const { groups } = buildUnifiedGroups(
+    [persona()],
+    [archived, live],
+    isArchived,
+  );
+
+  assert.equal(groups.length, 1);
+  assert.deepEqual(
+    groups[0].agents.map((agent) => agent.pubkey).sort(),
+    [archived.pubkey, live.pubkey].sort(),
+  );
+});
+
+test("a fail-open predicate keeps every standalone agent discoverable", () => {
+  const first = agent({ pubkey: "a".repeat(64), personaId: null });
+  const second = agent({ pubkey: "b".repeat(64), personaId: null });
+
+  const { ungrouped } = buildUnifiedGroups([], [first, second], NONE_ARCHIVED);
+
+  assert.equal(ungrouped.length, 2);
 });

@@ -179,6 +179,7 @@ fn backfill_of_promptless_record_keeps_spawn_snapshot_stable() {
         &[],
         "wss://ws.example",
         &Default::default(),
+        false,
     );
 
     backfill_standalone_agents_in_dir(&base(dir.path())).unwrap();
@@ -195,6 +196,7 @@ fn backfill_of_promptless_record_keeps_spawn_snapshot_stable() {
         &[],
         "wss://ws.example",
         &Default::default(),
+        false,
     );
 
     assert_eq!(
@@ -229,6 +231,7 @@ fn backfill_of_prompted_record_keeps_spawn_snapshot_stable() {
         &[],
         "wss://ws.example",
         &Default::default(),
+        false,
     );
 
     backfill_standalone_agents_in_dir(&base(dir.path())).unwrap();
@@ -245,6 +248,7 @@ fn backfill_of_prompted_record_keeps_spawn_snapshot_stable() {
         &[],
         "wss://ws.example",
         &Default::default(),
+        false,
     );
 
     assert_eq!(before.canonical(), after.canonical());

@@ -187,14 +187,14 @@ export function UserProfilePanel({
       requestedInstancePubkey &&
       normalizePubkey(pubkey) === normalizePubkey(requestedInstancePubkey),
   );
-
   const personasQuery = usePersonasQuery();
   const managedAgentsQuery = useManagedAgentsQuery({ enabled: true });
-  const { linkedPersonaId, managedAgent, personaInstances } =
+  const { instanceBuckets, linkedPersonaId, managedAgent } =
     useCanonicalManagedAgentProfile({
       currentPubkey,
       managedAgents: managedAgentsQuery.data,
       personaId: persona?.id,
+      preferDirectManagedAgent: true,
       preserveRequestedInstance,
       pubkey,
     });
@@ -398,14 +398,17 @@ export function UserProfilePanel({
     onClose,
     viewerIsOwner,
   });
-
+  const openResolvedPersonaEditor = React.useCallback(() => {
+    if (!resolvedPersona) return false;
+    setPersonaDialogState(
+      editPersonaDialogState(resolvedPersona, managedAgent),
+    );
+    return true;
+  }, [managedAgent, resolvedPersona]);
   const handleEditAgent = React.useCallback(() => {
-    if (resolvedPersona) {
-      setPersonaDialogState(editPersonaDialogState(resolvedPersona));
-      return;
-    }
+    if (openResolvedPersonaEditor()) return;
     setEditAgentOpen(true);
-  }, [resolvedPersona, setEditAgentOpen]);
+  }, [openResolvedPersonaEditor, setEditAgentOpen]);
 
   // Instructions row deep-link: persona-backed agents edit instructions in
   // the persona dialog; persona-less records (display-only fleet mirrors,
@@ -558,10 +561,7 @@ export function UserProfilePanel({
     ],
   );
 
-  const handleEditPersona = React.useCallback(() => {
-    if (!resolvedPersona) return;
-    setPersonaDialogState(editPersonaDialogState(resolvedPersona));
-  }, [resolvedPersona]);
+  const handleEditPersona = openResolvedPersonaEditor;
 
   const handleDuplicatePersona = React.useCallback(() => {
     if (!resolvedPersona) return;
@@ -827,7 +827,7 @@ export function UserProfilePanel({
           isFollowing={isFollowing}
           isOwner={viewerIsOwner}
           isSelf={isSelf}
-          instances={personaInstances}
+          instanceBuckets={instanceBuckets}
           activityAgent={activityAgent}
           managedAgent={managedAgent}
           agentInfoFields={agentInfoFields}
@@ -927,7 +927,7 @@ export function UserProfilePanel({
           ? () => {
               setEditAgentOpen(false);
               setEditAgentFocus(undefined);
-              setPersonaDialogState(editPersonaDialogState(resolvedPersona));
+              openResolvedPersonaEditor();
             }
           : undefined
       }
